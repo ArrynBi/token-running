@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
+from token_running.pricing import PriceTable
 from token_running.source import TokenSource
 
 WIDTH, HEIGHT = 440, 170   # 底部多留空间给横轴时间刻度，避免被遮挡
@@ -33,6 +34,17 @@ def _format_compact(value: int) -> str:
     return str(value)
 
 
+def _format_cost(value: float) -> str:
+    """费用格式化：美元。>=1 保留 2 位，否则显示美分/亚美分。"""
+    if value >= 100:
+        return f"${value:,.0f}"
+    if value >= 1:
+        return f"${value:.2f}"
+    if value >= 0.01:
+        return f"${value:.3f}"
+    return f"${value:.4f}"
+
+
 class RealtimeWindow(QWidget):
     def __init__(self, source: TokenSource | None = None) -> None:
         super().__init__(None)
@@ -51,11 +63,18 @@ class RealtimeWindow(QWidget):
         self._bars_sec: dict[str, dict[int, int]] = {n: {} for n in self._channels}  # 渠道 -> ts(秒) -> tokens
         self._bars_5s: dict[str, dict[int, int]] = {n: {} for n in self._channels}
         self._bars_min: dict[str, dict[int, int]] = {n: {} for n in self._channels}
+        self._cost_sec: dict[str, dict[int, float]] = {n: {} for n in self._channels}  # 渠道 -> ts(秒) -> 费用 USD
+        self._cost_5s: dict[str, dict[int, float]] = {n: {} for n in self._channels}
+        self._cost_min: dict[str, dict[int, float]] = {n: {} for n in self._channels}
+        self._prices = PriceTable.load_defaults()      # 模型价格表（可 UI 修改）
         self._mode: str = "sec"              # "sec" 秒级 60s 窗口 | "5s" 5 秒级 300s 窗口 | "min" 分钟级 60min 窗口
         self._view_mode: str = "combined"    # "combined" 合并单图 | "split" 分渠道多图（上下排列）
+        self._display: str = "tokens"        # 显示内容："tokens" | "cost"（费用 USD）
         self._today_caliber: str = "day"     # 今日口径："day" 自然日 | "24h" 近24小时
         self._total_caliber: str = "all"     # 总量口径："all" 全时段 | "7d" 近7天 | "30d" 近30天 | "90d" 近90天
         self._drag_offset: QPoint | None = None
+        self._cost_daily = 0.0   # 今日累计费用（USD）
+        self._cost_total = 0.0   # 全时段累计费用（USD）
 
         self.setWindowTitle("Token Running")
         self.setWindowFlags(
@@ -81,21 +100,34 @@ class RealtimeWindow(QWidget):
         min_cutoff = (now // 60 * 60) - BAR_WINDOW * 60
         for name, src in self._channels.items():
             for ev in src.poll():
+                cost = self._prices.cost(ev.model, ev.input_t, ev.output_t, ev.cache_read_t, ev.ts)
+                self._cost_total += cost
+                if ev.ts >= self._today_start_epoch():
+                    self._cost_daily += cost
                 b = self._bars_sec[name]
                 b[ev.ts] = b.get(ev.ts, 0) + ev.tokens
+                cb = self._cost_sec[name]
+                cb[ev.ts] = cb.get(ev.ts, 0) + cost
                 k5 = ev.ts // 5 * 5
                 b5 = self._bars_5s[name]
                 b5[k5] = b5.get(k5, 0) + ev.tokens
+                c5 = self._cost_5s[name]
+                c5[k5] = c5.get(k5, 0) + cost
                 mk = ev.ts // 60 * 60
                 bm = self._bars_min[name]
                 bm[mk] = bm.get(mk, 0) + ev.tokens
-            # 各渠道独立清理窗口外的桶
+                cm = self._cost_min[name]
+                cm[mk] = cm.get(mk, 0) + cost
+            # 各渠道独立清理窗口外的桶（tokens 与 cost 同步）
             for ts in [t for t in self._bars_sec[name] if t < sec_cutoff]:
                 del self._bars_sec[name][ts]
+                del self._cost_sec[name][ts]
             for k in [t for t in self._bars_5s[name] if t < cutoff_5s]:
                 del self._bars_5s[name][k]
+                del self._cost_5s[name][k]
             for m in [t for t in self._bars_min[name] if t < min_cutoff]:
                 del self._bars_min[name][m]
+                del self._cost_min[name][m]
         self.update()
 
     # ---- 拖动 ----
@@ -152,6 +184,39 @@ class RealtimeWindow(QWidget):
         self._refresh_height()
         self.update()
 
+    def _set_display(self, display: str) -> None:
+        self._display = display
+        self.update()
+
+    def _open_price_dialog(self) -> None:
+        """弹出价格设置对话框：每个模型的输入/输出/缓存命中价格（USD/M）。"""
+        from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel
+        dlg = QDialog(self)
+        dlg.setWindowTitle("价格设置（USD / 1M tokens）")
+        form = QFormLayout(dlg)
+        form.addRow(QLabel("波峰 9:00-12:00、14:00-18:00（北京）；空闲时段半价"))
+        editors = {}
+        for model, (i, o, cr) in sorted(self._prices.prices.items()):
+            row = [QLineEdit(str(i)), QLineEdit(str(o)), QLineEdit(str(cr))]
+            for w in row:
+                w.setFixedWidth(80)
+            form.addRow(model, row[0])
+            form.addRow("   输出", row[1])
+            form.addRow("   缓存命中", row[2])
+            editors[model] = row
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec():
+            for model, row in editors.items():
+                try:
+                    self._prices.set(model, float(row[0].text()), float(row[1].text()), float(row[2].text()))
+                except ValueError:
+                    pass
+            self._prices.save_defaults()
+            self.update()
+
     def _set_caliber(self, which: str, value: str) -> None:
         if which == "today":
             self._today_caliber = value
@@ -187,20 +252,29 @@ class RealtimeWindow(QWidget):
     def _is_channel_enabled(self, channel: str) -> bool:
         return channel in self._enabled
 
-    def _merged(self, per_channel: dict[str, dict[int, int]]) -> dict[int, int]:
-        """合并已启用渠道的桶（同秒求和）。"""
-        merged: dict[int, int] = {}
+    def _merged(self, per_channel: dict[str, dict[int, int]], cost_per_channel: dict[str, dict[int, float]] | None = None) -> dict:
+        """合并已启用渠道的桶（同槽求和）。display=cost 时按费用桶。"""
+        merged: dict[int, float] = {}
+        src_buckets = cost_per_channel if self._display == "cost" and cost_per_channel is not None else per_channel
         for name in self._bar_order:
             if name not in self._enabled:
                 continue
-            for ts, tokens in per_channel.get(name, {}).items():
-                merged[ts] = merged.get(ts, 0) + tokens
+            for ts, val in src_buckets.get(name, {}).items():
+                merged[ts] = merged.get(ts, 0.0) + val
         return merged
 
-    def _daily_total(self) -> int:
+    def _today_start_epoch(self) -> int:
+        t = time.localtime()
+        return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+
+    def _daily_total(self):
+        if self._display == "cost":
+            return self._cost_daily
         return sum(src.daily_total() for name, src in self._channels.items() if name in self._enabled)
 
-    def _total(self) -> int:
+    def _total(self):
+        if self._display == "cost":
+            return self._cost_total
         return sum(src.total() for name, src in self._channels.items() if name in self._enabled)
 
     def _online(self) -> bool:
@@ -261,6 +335,23 @@ class RealtimeWindow(QWidget):
             ogroup.addAction(oact)
             menu.addAction(oact)
         menu.addSeparator()
+        # 显示内容：tokens / 费用
+        dtitle = QAction("显示内容", menu)
+        dtitle.setEnabled(False)
+        menu.addAction(dtitle)
+        dgroup = QActionGroup(menu)
+        dgroup.setExclusive(True)
+        for key, label in (("tokens", "显示 Tokens"), ("cost", "显示费用（USD）")):
+            dact = QAction(label, menu)
+            dact.setCheckable(True)
+            dact.setChecked(self._display == key)
+            dact.triggered.connect(lambda checked=False, k=key: self._set_display(k))
+            dgroup.addAction(dact)
+            menu.addAction(dact)
+        price_act = QAction("价格设置…", menu)
+        price_act.triggered.connect(self._open_price_dialog)
+        menu.addAction(price_act)
+        menu.addSeparator()
         # 渠道多选：只显示选中的来源（DSH / Claude Code / Codex）
         title_act = QAction("显示渠道", menu)
         title_act.setEnabled(False)
@@ -311,6 +402,12 @@ class RealtimeWindow(QWidget):
     def _mode_unit(self, mode: str) -> str:
         return {"min": "tok/min", "5s": "tok/5s"}.get(mode, "tok")
 
+    def _fmt_value(self, val: float) -> str:
+        """按显示模式格式化数值：tokens 用 K/M，cost 用美元。"""
+        if self._display == "cost":
+            return _format_cost(val)
+        return _format_compact(int(val))
+
     def _paint_combined_chart(self, p: QPainter) -> None:
         """合并单图：所有启用渠道求和后一张柱状图。"""
         now_sec = int(time.time())
@@ -319,11 +416,11 @@ class RealtimeWindow(QWidget):
         step = chart_w / BAR_WINDOW
         bar_w = max(1.0, step * 0.6)
         if self._mode == "min":
-            buckets = self._merged(self._bars_min)
+            buckets = self._merged(self._bars_min, self._cost_min)
         elif self._mode == "5s":
-            buckets = self._merged(self._bars_5s)
+            buckets = self._merged(self._bars_5s, self._cost_5s)
         else:
-            buckets = self._merged(self._bars_sec)
+            buckets = self._merged(self._bars_sec, self._cost_sec)
         cur = self._mode_cur(self._mode, now_sec)
         max_tokens = max(buckets.values(), default=0) or 1
 
@@ -331,18 +428,18 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
+        for frac, val in [(1.0, max_tokens), (0.5, max_tokens / 2), (0.0, 0)]:
             y = CHART_BOTTOM - int(chart_h * frac)
-            self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
+            self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
         p.setPen(QColor(255, 255, 255, 25))
         for frac in (1.0, 0.5, 0.0):
             y = CHART_BOTTOM - int(chart_h * frac)
             p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
 
         for offset in range(BAR_WINDOW):
-            tokens = buckets.get(self._slot_of(self._mode, cur, offset), 0)
+            val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
             x = CHART_LEFT + offset * step
-            h = max(2.0, chart_h * tokens / max_tokens)
+            h = max(2.0, chart_h * val / max_tokens)
             p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
             p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
@@ -376,25 +473,30 @@ class RealtimeWindow(QWidget):
             row_h_chart = chart_bot - chart_top
             if self._mode == "min":
                 buckets = self._bars_min.get(name, {})
+                cost_buckets = self._cost_min.get(name, {})
             elif self._mode == "5s":
                 buckets = self._bars_5s.get(name, {})
+                cost_buckets = self._cost_5s.get(name, {})
             else:
                 buckets = self._bars_sec.get(name, {})
+                cost_buckets = self._cost_sec.get(name, {})
+            if self._display == "cost":
+                buckets = cost_buckets
             max_tokens = max(buckets.values(), default=0) or 1
             # 纵轴：两个刻度（max / max/2），画在柱状图区左侧（渠道名带之下），配两条横线
             p.setFont(QFont("Segoe UI", 7))
-            for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2)]:
+            for frac, val in [(1.0, max_tokens), (0.5, max_tokens / 2)]:
                 y = chart_bot - int(row_h_chart * frac)
-                self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
+                self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
             p.setPen(QColor(255, 255, 255, 25))
             for frac in (1.0, 0.5):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图
             for offset in range(BAR_WINDOW):
-                tokens = buckets.get(self._slot_of(self._mode, cur, offset), 0)
+                val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
-                h = max(2.0, row_h_chart * tokens / max_tokens)
+                h = max(2.0, row_h_chart * val / max_tokens)
                 p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
                 p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
@@ -438,7 +540,8 @@ class RealtimeWindow(QWidget):
         f = QFont("Segoe UI", 9)
         p.setFont(f)
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
-        p.drawText(38, 20, f"TOKEN RUNNING · " + ("实时" if online else "离线") + f" · {mode_text}")
+        unit_tag = "COST" if self._display == "cost" else "TOKENS"
+        p.drawText(38, 20, f"TOKEN RUNNING · {unit_tag} · " + ("实时" if online else "离线") + f" · {mode_text}")
 
         # 右上角：今日（8pt 小字）与数字（17pt 大字）同排，右缘对齐；下方总量紧跟无空行
         f3 = QFont("Segoe UI", 8)
@@ -446,14 +549,14 @@ class RealtimeWindow(QWidget):
         p.setFont(f2)
         p.setPen(TEXT_COLOR)
         fm2 = p.fontMetrics()
-        num_text = _format_compact(self._daily_total())
+        num_text = self._fmt_value(self._daily_total())
         num_w = fm2.horizontalAdvance(num_text)
         p.drawText(436 - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
         p.setFont(f3)
         p.setPen(MUTED)
         fm3 = p.fontMetrics()
         p.drawText(436 - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
-        self._draw_text_right(p, 436, 40, f"总量 {_format_compact(self._total())}")  # 紧跟今日行下方
+        self._draw_text_right(p, 436, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
 
         # 柱状图主体：按显示方式（合并 / 分渠道多图）
         if self._view_mode == "split":

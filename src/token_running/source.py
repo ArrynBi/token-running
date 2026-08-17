@@ -21,6 +21,11 @@ _SQL_COLS = "rowid, created_at, input_tokens, output_tokens, cache_read_tokens, 
 class UsageEvent:
     ts: int      # created_at：请求完成时刻（epoch 秒）
     tokens: int  # 全量 tokens = input+output+cache_read+cache_creation
+    model: str = ""            # 模型名（费用计算用；未知为空）
+    input_t: int = 0           # 输入 tokens
+    output_t: int = 0          # 输出 tokens
+    cache_read_t: int = 0      # 缓存命中 tokens
+    cache_create_t: int = 0    # 缓存写入 tokens
 
 
 class TokenSource:
@@ -43,6 +48,7 @@ class TokenSource:
         self._online = False
         self._today_since: int | None = None   # 今日口径起点（None=本地自然日 0 点）
         self._total_since: int | None = None   # 总量口径起点（None=全时段）
+        self._has_model = False                # 库是否有 model 列（兼容旧测试库）
         self._init()
 
     def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
@@ -56,9 +62,21 @@ class TokenSource:
         ph = ",".join("?" for _ in self._app_types)
         return f" AND app_type IN ({ph})", list(self._app_types)
 
+    def _cols(self) -> str:
+        """动态 SELECT 列：有 model 列则带上（费用计算用）。"""
+        if self._has_model:
+            return _SQL_COLS.replace("rowid, created_at,", "rowid, created_at, model,")
+        return _SQL_COLS
+
     def _init(self) -> None:
         try:
             self._conn = sqlite3.connect(str(self._db_path))
+            # 检测 model 列是否存在（旧测试库可能没有）
+            try:
+                cols = [r[1] for r in self._conn.execute("PRAGMA table_info(proxy_request_logs)").fetchall()]
+                self._has_model = "model" in cols
+            except sqlite3.Error:
+                self._has_model = False
             clause, args = self._type_clause()
             row = self._conn.execute(
                 f"SELECT MAX(rowid), COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens),0)"
@@ -103,16 +121,22 @@ class TokenSource:
         try:
             clause, args = self._type_clause()
             cur = self._conn.execute(
-                f"SELECT {_SQL_COLS} FROM proxy_request_logs WHERE rowid > ?{clause} ORDER BY rowid",
+                f"SELECT {self._cols()} FROM proxy_request_logs WHERE rowid > ?{clause} ORDER BY rowid",
                 [self._last_rowid] + args,
             )
             rows = cur.fetchall()
         except sqlite3.Error:
             return []
         events: list[UsageEvent] = []
-        for rowid, ts, i, o, cr, cc in rows:
+        for row in rows:
+            if self._has_model:
+                rowid, ts, model, i, o, cr, cc = row
+            else:
+                rowid, ts, i, o, cr, cc = row
+                model = ""
             total = i + o + cr + cc
-            events.append(UsageEvent(ts, total))
+            events.append(UsageEvent(ts, total, model=model or "", input_t=i, output_t=o,
+                                     cache_read_t=cr, cache_create_t=cc))
             self._last_rowid = rowid
             self._daily_total += total
         return events

@@ -40,6 +40,7 @@ class DeepseekTraceSource:
         self._online = False
         self._today_since: int | None = None   # 今日口径起点（None=自然日 0 点）
         self._total_since: int | None = None   # 总量口径起点（None=全时段）
+        self._cur_model: str = ""              # 最近一次 request/header 的模型
         self._init()
 
     def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
@@ -169,7 +170,15 @@ class DeepseekTraceSource:
             obj = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             return None
-        if obj.get("type") != "assistant/message":
+        etype = obj.get("type")
+        # request/header 携带模型信息，更新当前会话模型（后续 assistant/message 属于该模型）
+        if etype == "request/header":
+            cfg = obj.get("data", {}).get("header", {}).get("config", {})
+            m = cfg.get("model")
+            if m:
+                self._cur_model = m
+            return None
+        if etype != "assistant/message":
             return None
         usage = obj.get("data", {}).get("usage")
         if not usage or not isinstance(usage, dict):
@@ -181,13 +190,13 @@ class DeepseekTraceSource:
             ts = int(ts_ms) // 1000
         except (ValueError, TypeError):
             return None
-        tokens = (
-            int(usage.get("inputTokens") or 0)
-            + int(usage.get("outputTokens") or 0)
-            + int(usage.get("cacheReadTokens") or 0)
-            + int(usage.get("reasoningTokens") or 0)
-        )
-        return UsageEvent(ts, tokens)
+        it = int(usage.get("inputTokens") or 0)
+        ot = int(usage.get("outputTokens") or 0)
+        crt = int(usage.get("cacheReadTokens") or 0)
+        rt = int(usage.get("reasoningTokens") or 0)
+        tokens = it + ot + crt + rt
+        return UsageEvent(ts, tokens, model=self._cur_model, input_t=it, output_t=ot,
+                          cache_read_t=crt, cache_create_t=0)
 
     def daily_total(self) -> int:
         return self._daily_total

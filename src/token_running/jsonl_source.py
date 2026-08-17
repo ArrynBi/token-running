@@ -169,13 +169,14 @@ class JsonlSource:
             ts = _iso_to_epoch(ts_iso)
         except (ValueError, TypeError, OverflowError):
             return None
-        tokens = (
-            int(usage.get("input_tokens") or 0)
-            + int(usage.get("output_tokens") or 0)
-            + int(usage.get("cache_read_input_tokens") or 0)
-            + int(usage.get("cache_creation_input_tokens") or 0)
-        )
-        return UsageEvent(ts, tokens)
+        it = int(usage.get("input_tokens") or 0)
+        ot = int(usage.get("output_tokens") or 0)
+        crt = int(usage.get("cache_read_input_tokens") or 0)
+        cct = int(usage.get("cache_creation_input_tokens") or 0)
+        tokens = it + ot + crt + cct
+        model = obj.get("message", {}).get("model") or ""
+        return UsageEvent(ts, tokens, model=model, input_t=it, output_t=ot,
+                          cache_read_t=crt, cache_create_t=cct)
 
     def daily_total(self) -> int:
         return self._daily_total
