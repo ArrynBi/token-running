@@ -42,8 +42,9 @@ class RealtimeWindow(QWidget):
             if not self._source.online():
                 self._source = TokenSource()
         self._bars_sec: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶（秒级视图）
+        self._bars_5s: dict[int, int] = {}   # 5 秒起点(epoch 秒) -> 该 5 秒窗全量 tokens 桶（5 秒级视图）
         self._bars_min: dict[int, int] = {}  # 分钟起点(epoch 秒) -> 该分钟全量 tokens 桶（分钟视图）
-        self._mode: str = "sec"              # "sec" 秒级 60 秒窗口 | "min" 分钟级 60 分钟窗口
+        self._mode: str = "sec"              # "sec" 秒级 60s 窗口 | "5s" 5 秒级 300s 窗口 | "min" 分钟级 60min 窗口
         self._drag_offset: QPoint | None = None
 
         self.setWindowTitle("Token Running")
@@ -66,12 +67,17 @@ class RealtimeWindow(QWidget):
         now = int(time.time())
         for ev in self._source.poll():
             self._bars_sec[ev.ts] = self._bars_sec.get(ev.ts, 0) + ev.tokens
+            k5 = ev.ts // 5 * 5
+            self._bars_5s[k5] = self._bars_5s.get(k5, 0) + ev.tokens
             mkey = ev.ts // 60 * 60
             self._bars_min[mkey] = self._bars_min.get(mkey, 0) + ev.tokens
-        # 清理各自窗口外的桶：秒级保留 60 秒，分钟级保留 60 分钟
+        # 清理各自窗口外的桶：秒级 60s / 5 秒级 300s / 分钟级 60min
         sec_cutoff = now - BAR_WINDOW
         for ts in [t for t in self._bars_sec if t < sec_cutoff]:
             del self._bars_sec[ts]
+        cutoff_5s = (now // 5 * 5) - BAR_WINDOW * 5
+        for k in [t for t in self._bars_5s if t < cutoff_5s]:
+            del self._bars_5s[k]
         min_cutoff = (now // 60 * 60) - BAR_WINDOW * 60
         for m in [t for t in self._bars_min if t < min_cutoff]:
             del self._bars_min[m]
@@ -81,8 +87,9 @@ class RealtimeWindow(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.RightButton:
-            # 右键：切换秒级/分钟级视图
-            self._mode = "min" if self._mode == "sec" else "sec"
+            # 右键：循环切换 秒级 -> 5秒级 -> 分钟级
+            order = ("sec", "5s", "min")
+            self._mode = order[(order.index(self._mode) + 1) % len(order)]
             self.update()
             event.accept()
             return
@@ -114,7 +121,7 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         f = QFont("Segoe UI", 9)
         p.setFont(f)
-        mode_text = "秒级" if self._mode == "sec" else "分钟级"
+        mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
         p.drawText(38, 20, "TOKEN RUNNING · " + ("实时" if online else "离线") + " · " + mode_text)
 
         # 右上角：当日大数字 + 今日标签 + 总量（全时段累计）
@@ -139,6 +146,11 @@ class RealtimeWindow(QWidget):
             unit_label = "tokens/min"
             cur = now_sec // 60 * 60  # 当前分钟起点
             slot_of = lambda i: cur - i * 60
+        elif self._mode == "5s":
+            buckets = self._bars_5s
+            unit_label = "tokens/5s"
+            cur = now_sec // 5 * 5  # 当前 5 秒窗起点
+            slot_of = lambda i: cur - i * 5
         else:
             buckets = self._bars_sec
             unit_label = "tokens"
