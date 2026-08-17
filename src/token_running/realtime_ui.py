@@ -4,8 +4,8 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import QPoint, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QPainter
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from token_running.combined_source import CombinedSource
 from token_running.deepseek_trace import DeepseekTraceSource
@@ -90,15 +90,16 @@ class RealtimeWindow(QWidget):
     # ---- 拖动 ----
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.RightButton:
-            # 右键：循环切换 秒级 -> 5秒级 -> 分钟级
-            order = ("sec", "5s", "min")
-            self._mode = order[(order.index(self._mode) + 1) % len(order)]
-            self.update()
-            event.accept()
-            return
-        self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
         event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        # 左键双击：循环切换 秒级 -> 5秒级 -> 分钟级
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = None
+            self._cycle_mode()
+            event.accept()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._drag_offset is not None:
@@ -106,8 +107,45 @@ class RealtimeWindow(QWidget):
             event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            # 右键释放：打开菜单
+            self._drag_offset = None
+            self._show_menu(event.globalPosition().toPoint())
+            event.accept()
+            return
         self._drag_offset = None
         event.accept()
+
+    # ---- 模式与菜单 ----
+
+    def _cycle_mode(self) -> None:
+        order = ("sec", "5s", "min")
+        self._mode = order[(order.index(self._mode) + 1) % len(order)]
+        self.update()
+
+    def _set_mode(self, mode: str) -> None:
+        self._mode = mode
+        self.update()
+
+    def _build_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for key, label in (("sec", "秒级（60s 窗口）"), ("5s", "5 秒级（300s 窗口）"), ("min", "分钟级（60min 窗口）")):
+            act = QAction(label, menu)
+            act.setCheckable(True)
+            act.setChecked(self._mode == key)
+            act.triggered.connect(lambda checked=False, k=key: self._set_mode(k))
+            group.addAction(act)
+            menu.addAction(act)
+        menu.addSeparator()
+        quit_act = menu.addAction("退出")
+        quit_act.triggered.connect(self.close)
+        return menu
+
+    def _show_menu(self, pos: QPoint) -> None:
+        self._build_menu().exec(pos)
 
     # ---- 绘制 ----
 
