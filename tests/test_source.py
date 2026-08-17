@@ -37,7 +37,10 @@ def test_poll_returns_all_rows_once(tmp_path):
     make_db(tmp_path / "t.db", [(1000, "claude", 10, 20, 30, 40), (1001, "codex", 1, 2, 3, 4)])
     src = TokenSource(tmp_path / "t.db", now_fn=lambda: DAY_START + 3600)
     events = src.poll()
-    assert events == [UsageEvent(1000, 100), UsageEvent(1001, 10)]  # 10+20+30+40=100, 1+2+3+4=10
+    # 事件携带 token 明细（用于费用计算）；断言 tokens 与明细
+    assert [e.tokens for e in events] == [100, 10]  # 10+20+30+40=100, 1+2+3+4=10
+    assert events[0].input_t == 10 and events[0].output_t == 20
+    assert events[0].cache_read_t == 30 and events[0].cache_create_t == 40
     assert src.poll() == []  # 第二次无增量
 
 
