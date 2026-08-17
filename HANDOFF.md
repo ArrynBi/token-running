@@ -1,0 +1,86 @@
+# token-running 交接文档（Handoff）
+
+> 本文档交付给 **DeepSeek harness** 执行。项目背景、已验证事实、设计决策、实施计划均已固化在仓库内。请先通读本文档，再按 [实施计划](docs/superpowers/plans/2026-08-17-token-running-mvp.md) 逐任务执行。
+>
+> 交接日期：2026-08-17
+
+---
+
+## 1. 任务一句话
+
+在 `c:\Users\admin\Desktop\Coding\token-running\` 实现一个 **秒级动态浮窗 token 消耗监测小程序（MVP）**：轮询 cc-switch 的本地 SQLite 数据库，以**流动柱状图**（新柱从左侧进入、整体右移，最近 60 秒窗口）呈现**每秒消耗量**，以**数字**呈现**当日总消耗量**。目标是**验证实时链路是否成立**，UI 无需美化。
+
+## 2. 项目位置与状态
+
+- 项目根：`C:\Users\admin\Desktop\Coding\token-running\`（**独立 git 仓库**，已初始化）
+- 已提交：设计文档 + 实施计划（提交 `1503e3e`、`23563be`）
+- 待实现：`src/token_running/{source.py, realtime_ui.py}`、`tests/test_source.py`、`main.py`、`requirements.txt`、`src/token_running/__init__.py`
+- 参考项目：`C:\Users\admin\Desktop\Coding\token-monitor\`（PySide6 悬浮球，可借鉴窗口模式与格式化函数，**不得修改它**）
+
+## 3. 数据源（已实验验证，勿重复验证）
+
+| 项 | 事实 |
+|---|---|
+| 数据库 | `C:\Users\admin\.cc-switch\cc-switch.db`（SQLite，**由 cc-switch 程序写入**，本项目只读轮询） |
+| 核心表 | `proxy_request_logs`，字段：`rowid, created_at, app_type, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, status_code, error_message` |
+| 同步链路 | Claude Code 消息完成 → **即时**写入 `~/.claude/projects/**/*.jsonl` → cc-switch **事件驱动 2–7 秒内**解析入库 → 空闲期静止 |
+| 并发 | SQLite 只读轮询（每秒 1 次）无冲突 |
+| 时间戳 | `created_at` 为 epoch **秒**（请求完成时刻），与本地时区一致 |
+| 数据规模 | 现有约 12 万条记录，含 claude / codex / opencode 三种 app_type |
+
+**实时性结论**：轮询间隔 1 秒 + 2–7 秒同步延迟 = 柱状图延迟 2–7 秒内出现新柱，视觉平滑，**足以支撑 MVP**。
+
+## 4. 已确认的设计决策（用户拍板，勿更改）
+
+1. 数据源：**cc-switch 数据库**（非网络请求、非 JSONL 直读；JSONL 直读为后续增强，MVP 不做）
+2. 每秒消耗口径：**含缓存全量** = `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens`，按 `created_at` 秒分桶
+3. 当日总消耗：本地时区**今日 0 点（epoch 秒）起**的全量 tokens 之和
+4. 统计范围：**全部工具**（不按 app_type 过滤）
+5. 柱状图：最近 **60 秒**窗口，**新柱从左侧进入、整体右移**（最新在最左）
+6. 浮窗：PySide6，`FramelessWindowHint | WindowStaysOnTopHint | Tool` + `WA_TranslucentBackground`，可拖动
+7. 扩展现有 token-monitor 还是新建？——**新建独立项目 token-running**（本仓库），借鉴 token-monitor 代码（窗口模式、`_format_compact_int` 等）
+8. MVP **不做**：UI 美化、设置页、JSONL 直读、打包（exe）、成本显示
+
+## 5. 实施计划
+
+**按 [docs/superpowers/plans/2026-08-17-token-running-mvp.md](docs/superpowers/plans/2026-08-17-token-running-mvp.md) 逐任务执行**，该计划含全部代码、命令与预期输出，采用 TDD（测试先行）：
+
+1. **Task 1**：写 `tests/test_source.py`（5 个用例：增量轮询、含缓存全量求和、当日从 0 点起、跨天重置、库缺失离线）+ `requirements.txt` + 包骨架 → 运行测试确认红
+2. **Task 2**：实现 `src/token_running/source.py`（`TokenSource` 类）→ 测试转绿 → 真实库冒烟
+3. **Task 3**：实现 `src/token_running/realtime_ui.py`（`RealtimeWindow`）+ `main.py` → 冒烟运行 + 测试不回归
+4. **Task 4**：端到端验证（见 §7）
+
+**执行纪律**：每任务结束 commit（提交信息模板见计划）；不修改已提交的设计/计划文档（验证记录追加除外）。
+
+## 6. 环境（已确认可用）
+
+- Windows 11，Shell 为 Git Bash；Python 3.12.10（`python` 命令可用）
+- **PySide6 6.11.0 已装、pytest 9.0.2 已装**，无需安装
+- 测试运行：在项目根执行 `python -m pytest tests/ -v`
+- 注意：Windows 下 `python` 直接可用；无需虚拟环境（系统环境已具备依赖）
+
+## 7. 验收标准（Task 4 实测）
+
+1. `python main.py` 启动浮窗（后台运行）
+2. 在 Claude Code 中发起一轮对话（用户配合）
+3. 消息完成后 **2–7 秒内**，柱状图**左侧出现新柱**、旧柱右移
+4. 「今日 tokens」数字随之增长；状态点为绿（cc-switch 在线）
+5. 空闲 30 秒柱状图静止、不崩溃；拖动浮窗正常
+6. 将验证结果（日期、通过与否、实际延迟秒数）追加到计划文档末尾
+
+## 8. 已知坑位
+
+- `sqlite3.connect()` 对不存在的路径会**创建空文件**而不报错——`TokenSource._init()` 必须依赖后续查询（no such table）抛错来判定离线，或先校验表存在（计划 Task 2 Step 2 有说明）
+- cc-switch 程序**必须保持运行**，数据才有更新；未运行时 UI 显示「离线」状态点（红），属预期行为
+- 计划中 Task 1 的 `test_daily_total_resets_across_midnight` 已改为「同一 source 跨天」正确写法，以计划文件内为准
+- 提交时 `git` 在 Windows 会有 LF→CRLF 警告，忽略即可
+
+## 9. 完成判定
+
+以下全部满足即为完成：
+
+- [ ] `python -m pytest tests/ -v` → 5 passed
+- [ ] `python main.py` 浮窗正常显示，柱状图左进右移
+- [ ] 真机验证：对话后 2–7 秒新柱出现、今日数字增长
+- [ ] 4 个任务均有 commit，工作区干净（`git status` 无未提交改动）
+- [ ] 验证结果已记录在计划文档末尾
