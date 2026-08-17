@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
+from token_running.jsonl_source import JsonlSource
 from token_running.source import TokenSource
 
 WIDTH, HEIGHT = 440, 160
@@ -33,7 +34,13 @@ def _format_compact(value: int) -> str:
 class RealtimeWindow(QWidget):
     def __init__(self, source: TokenSource | None = None) -> None:
         super().__init__(None)
-        self._source = source or TokenSource()
+        if source is not None:
+            self._source = source
+        else:
+            # 秒级主源：JSONL 直读（消息完成即入库）；JSONL 不可用时回退 cc-switch DB（60s 同步）
+            self._source = JsonlSource()
+            if not self._source.online():
+                self._source = TokenSource()
         self._bars: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶
         self._drag_offset: QPoint | None = None
 
