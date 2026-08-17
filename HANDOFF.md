@@ -23,16 +23,17 @@
 |---|---|
 | 数据库 | `C:\Users\admin\.cc-switch\cc-switch.db`（SQLite，**由 cc-switch 程序写入**，本项目只读轮询） |
 | 核心表 | `proxy_request_logs`，字段：`rowid, created_at, app_type, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, status_code, error_message` |
-| 同步链路 | Claude Code 消息完成 → **即时**写入 `~/.claude/projects/**/*.jsonl` → cc-switch **事件驱动 2–7 秒内**解析入库 → 空闲期静止 |
-| 并发 | SQLite 只读轮询（每秒 1 次）无冲突 |
-| 时间戳 | `created_at` 为 epoch **秒**（请求完成时刻），与本地时区一致 |
+| 同步链路 | Claude Code 消息完成 → **即时**写入 `~/.claude/projects/**/*.jsonl` → cc-switch **固定 60 秒周期**扫描入库（日志显示整分钟触发，非事件驱动）→ 空闲期静止 |
+| 同步延迟实测 | **cc-switch 入库：最长 ~60 秒**（2026-08-17 实测：JSONL 22:50:21 写入 → DB 22:50:22 入库，恰为下一个整分钟同步周期）；**JSONL 直读：0.4–1.5 秒**（JsonlSource 增量解析实测） |
+| 并发 | SQLite 只读轮询（每秒 1 次）无冲突；JSONL 增量按字节偏移读取，追加式无冲突 |
+| 时间戳 | `created_at` 为 epoch **秒**（请求完成时刻），与本地时区一致；JSONL 用 `timestamp`（ISO 8601 UTC）转 epoch 秒 |
 | 数据规模 | 现有约 12 万条记录，含 claude / codex / opencode 三种 app_type |
 
-**实时性结论**：轮询间隔 1 秒 + 2–7 秒同步延迟 = 柱状图延迟 2–7 秒内出现新柱，视觉平滑，**足以支撑 MVP**。
+**实时性结论（已修正）**：cc-switch DB 路径延迟 ~60 秒（分钟级同步）；项目已加 **JsonlSource 直读 JSONL 兜底，实测 0.4–1.5 秒**，浮窗秒级显示。原交接文档声称的"事件驱动 2–7 秒"与实测不符，已废弃。
 
 ## 4. 已确认的设计决策（用户拍板，勿更改）
 
-1. 数据源：**cc-switch 数据库**（非网络请求、非 JSONL 直读；JSONL 直读为后续增强，MVP 不做）
+1. 数据源：**cc-switch 数据库**（非网络请求）+ **JSONL 直读兜底**（2026-08-17 用户拍板新增：`JsonlSource` 增量解析 `~/.claude/projects/**/*.jsonl`，实测秒级；UI 默认用它，JSONL 不可用时回退 DB）
 2. 每秒消耗口径：**含缓存全量** = `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens`，按 `created_at` 秒分桶
 3. 当日总消耗：本地时区**今日 0 点（epoch 秒）起**的全量 tokens 之和
 4. 统计范围：**全部工具**（不按 app_type 过滤）
