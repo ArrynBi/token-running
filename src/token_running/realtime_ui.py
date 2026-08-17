@@ -205,6 +205,11 @@ class RealtimeWindow(QWidget):
 
     # ---- 绘制 ----
 
+    def _draw_text_right(self, p: QPainter, x_right: int, y: int, text: str) -> None:
+        """右对齐文本：PySide6 6.11 的 drawText(rect, AlignRight) 有 bug 不渲染，改用手动宽度定位。"""
+        fm = p.fontMetrics()
+        p.drawText(x_right - fm.horizontalAdvance(text), y, text)
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -226,12 +231,12 @@ class RealtimeWindow(QWidget):
         p.setPen(TEXT_COLOR)
         f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
         p.setFont(f2)
-        p.drawText(220, 12, 424, 22, Qt.AlignmentFlag.AlignRight, _format_compact(self._daily_total()))
+        self._draw_text_right(p, 424, 12, _format_compact(self._daily_total()))
         p.setPen(MUTED)
         f3 = QFont("Segoe UI", 8)
         p.setFont(f3)
-        p.drawText(220, 28, 424, 12, Qt.AlignmentFlag.AlignRight, "今日 tokens")
-        p.drawText(220, 41, 424, 12, Qt.AlignmentFlag.AlignRight, f"总量 {_format_compact(self._total())}")
+        self._draw_text_right(p, 424, 28, "今日 tokens")
+        self._draw_text_right(p, 424, 41, f"总量 {_format_compact(self._total())}")
 
         # 流动柱状图：固定 BAR_WINDOW 槽，最新在左（offset=0），旧柱右移；无数据槽画 2px 基线
         now_sec = int(time.time())
@@ -260,10 +265,10 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        p.drawText(2, CHART_TOP - 12, CHART_LEFT - 6, 10, Qt.AlignmentFlag.AlignRight, unit_label)
+        self._draw_text_right(p, CHART_LEFT - 6, CHART_TOP - 12, unit_label)
         for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
             y = CHART_BOTTOM - int(chart_h * frac)
-            p.drawText(2, y - 4, CHART_LEFT - 6, 10, Qt.AlignmentFlag.AlignRight, _format_compact(val))
+            self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
         # 刻度线
         p.setPen(QColor(255, 255, 255, 25))
         for frac in (1.0, 0.5, 0.0):
@@ -298,4 +303,4 @@ class RealtimeWindow(QWidget):
             x = CHART_LEFT + (age / window_val) * chart_w
             x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
             p.drawText(int(x), CHART_BOTTOM + 4, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
-        p.drawText(CHART_RIGHT - 30, CHART_BOTTOM + 4, 30, 10, Qt.AlignmentFlag.AlignRight, f"←{window_val}{x_unit}")
+        self._draw_text_right(p, CHART_RIGHT, CHART_BOTTOM + 4, f"←{window_val}{x_unit}")
