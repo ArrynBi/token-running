@@ -15,6 +15,7 @@ WIDTH, HEIGHT = 440, 160
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
 CHART_LEFT, CHART_TOP = 42, 54   # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
 CHART_RIGHT, CHART_BOTTOM = 424, 140
+SPLIT_ROW_H = 72             # 分渠道多图：每渠道一行的高度
 BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
 BAR_COLOR = QColor(94, 200, 130, 210)
 BAR_DIM = QColor(94, 200, 130, 60)
@@ -51,6 +52,7 @@ class RealtimeWindow(QWidget):
         self._bars_5s: dict[str, dict[int, int]] = {n: {} for n in self._channels}
         self._bars_min: dict[str, dict[int, int]] = {n: {} for n in self._channels}
         self._mode: str = "sec"              # "sec" 秒级 60s 窗口 | "5s" 5 秒级 300s 窗口 | "min" 分钟级 60min 窗口
+        self._view_mode: str = "combined"    # "combined" 合并单图 | "split" 分渠道多图（上下排列）
         self._drag_offset: QPoint | None = None
 
         self.setWindowTitle("Token Running")
@@ -140,7 +142,21 @@ class RealtimeWindow(QWidget):
             self._enabled.add(channel)
         else:
             self._enabled.discard(channel)
+        self._refresh_height()
         self.update()
+
+    def _set_view_mode(self, mode: str) -> None:
+        self._view_mode = mode
+        self._refresh_height()
+        self.update()
+
+    def _refresh_height(self) -> None:
+        """合并模式固定 160 高；分渠道模式按启用渠道数增高（每渠道一行）。"""
+        if self._view_mode == "split":
+            n = sum(1 for c in self._bar_order if c in self._enabled) or 1
+            self.setFixedSize(WIDTH, CHART_TOP + n * SPLIT_ROW_H + 6)
+        else:
+            self.setFixedSize(WIDTH, HEIGHT)
 
     # ---- 渠道聚合辅助 ----
 
@@ -184,6 +200,20 @@ class RealtimeWindow(QWidget):
             group.addAction(act)
             menu.addAction(act)
         menu.addSeparator()
+        # 显示方式：合并单图 / 分渠道多图
+        vtitle = QAction("显示方式", menu)
+        vtitle.setEnabled(False)
+        menu.addAction(vtitle)
+        vgroup = QActionGroup(menu)
+        vgroup.setExclusive(True)
+        for key, label in (("combined", "合并显示"), ("split", "分渠道多图（上下）")):
+            vact = QAction(label, menu)
+            vact.setCheckable(True)
+            vact.setChecked(self._view_mode == key)
+            vact.triggered.connect(lambda checked=False, k=key: self._set_view_mode(k))
+            vgroup.addAction(vact)
+            menu.addAction(vact)
+        menu.addSeparator()
         # 渠道多选：只显示选中的来源（DSH / Claude Code / Codex）
         title_act = QAction("显示渠道", menu)
         title_act.setEnabled(False)
@@ -216,6 +246,133 @@ class RealtimeWindow(QWidget):
         fm = p.fontMetrics()
         p.drawText(x_right - fm.horizontalAdvance(text), y, text)
 
+    def _slot_of(self, mode: str, cur: int, i: int) -> int:
+        """按模式计算第 i 个槽（offset=0 最新）对应的时间起点。"""
+        if mode == "min":
+            return cur - i * 60
+        if mode == "5s":
+            return cur - i * 5
+        return cur - i
+
+    def _mode_cur(self, mode: str, now_sec: int) -> int:
+        if mode == "min":
+            return now_sec // 60 * 60
+        if mode == "5s":
+            return now_sec // 5 * 5
+        return now_sec
+
+    def _mode_unit(self, mode: str) -> str:
+        return {"min": "tok/min", "5s": "tok/5s"}.get(mode, "tok")
+
+    def _paint_combined_chart(self, p: QPainter) -> None:
+        """合并单图：所有启用渠道求和后一张柱状图。"""
+        now_sec = int(time.time())
+        chart_w = CHART_RIGHT - CHART_LEFT
+        chart_h = CHART_BOTTOM - CHART_TOP
+        step = chart_w / BAR_WINDOW
+        bar_w = max(1.0, step * 0.6)
+        if self._mode == "min":
+            buckets = self._merged(self._bars_min)
+        elif self._mode == "5s":
+            buckets = self._merged(self._bars_5s)
+        else:
+            buckets = self._merged(self._bars_sec)
+        unit_label = self._mode_unit(self._mode)
+        cur = self._mode_cur(self._mode, now_sec)
+        max_tokens = max(buckets.values(), default=0) or 1
+
+        # 纵轴刻度
+        p.setPen(MUTED)
+        fy = QFont("Segoe UI", 7)
+        p.setFont(fy)
+        self._draw_text_right(p, CHART_LEFT - 6, CHART_TOP - 12, unit_label)
+        for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
+            y = CHART_BOTTOM - int(chart_h * frac)
+            self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
+        p.setPen(QColor(255, 255, 255, 25))
+        for frac in (1.0, 0.5, 0.0):
+            y = CHART_BOTTOM - int(chart_h * frac)
+            p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+
+        for offset in range(BAR_WINDOW):
+            tokens = buckets.get(self._slot_of(self._mode, cur, offset), 0)
+            x = CHART_LEFT + offset * step
+            h = max(2.0, chart_h * tokens / max_tokens)
+            p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
+            p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
+
+        p.setPen(QColor(255, 255, 255, 30))
+        p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
+        # 横轴时间刻度
+        self._paint_x_axis(p, now_sec, chart_w, CHART_BOTTOM + 4)
+
+    def _paint_split_charts(self, p: QPainter) -> None:
+        """分渠道多图：每个启用渠道一个上下排列的柱状图。"""
+        now_sec = int(time.time())
+        chart_w = CHART_RIGHT - CHART_LEFT
+        step = chart_w / BAR_WINDOW
+        bar_w = max(1.0, step * 0.6)
+        enabled = [n for n in self._bar_order if n in self._enabled]
+        n = len(enabled) or 1
+        row_h = (self.height() - CHART_TOP - 6) / n
+        label_map = {"dsh": "DSH", "claude": "CLAUDE", "codex": "CODEX", "opencode": "OPENCODE", "custom": "CUSTOM"}
+        unit_label = self._mode_unit(self._mode)
+        cur = self._mode_cur(self._mode, now_sec)
+
+        for i, name in enumerate(enabled):
+            y_top = CHART_TOP + i * row_h
+            y_bot = y_top + row_h
+            # 渠道名（左上）
+            p.setPen(MUTED)
+            p.setFont(QFont("Segoe UI", 8))
+            p.drawText(4, y_top, 36, 14, Qt.AlignmentFlag.AlignLeft, label_map.get(name, name.upper()))
+            # 该渠道桶（按当前时间粒度）
+            if self._mode == "min":
+                buckets = self._bars_min.get(name, {})
+            elif self._mode == "5s":
+                buckets = self._bars_5s.get(name, {})
+            else:
+                buckets = self._bars_sec.get(name, {})
+            max_tokens = max(buckets.values(), default=0) or 1
+            row_h_chart = row_h - 18  # 留渠道名行
+            # 纵轴单位 + 最大值（该行右对齐）
+            p.setFont(QFont("Segoe UI", 7))
+            self._draw_text_right(p, CHART_LEFT - 6, y_top + 2, unit_label)
+            self._draw_text_right(p, CHART_LEFT - 6, y_top + 12, _format_compact(max_tokens))
+            # 柱状图
+            for offset in range(BAR_WINDOW):
+                tokens = buckets.get(self._slot_of(self._mode, cur, offset), 0)
+                x = CHART_LEFT + offset * step
+                h = max(2.0, row_h_chart * tokens / max_tokens)
+                p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
+                p.drawRect(int(x), int(y_top + 18 + row_h_chart - h), int(bar_w), int(h))
+            # 行底分隔线
+            p.setPen(QColor(255, 255, 255, 25))
+            p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
+
+        # 最底部一行画横轴刻度
+        self._paint_x_axis(p, now_sec, chart_w, int(self.height() - 10))
+
+    def _paint_x_axis(self, p: QPainter, now_sec: int, chart_w: float, y: int) -> None:
+        p.setPen(MUTED)
+        fx = QFont("Segoe UI", 7)
+        p.setFont(fx)
+        if self._mode == "min":
+            window_val, x_unit = 60, "min"
+            x_ticks = [0, 15, 30, 45, 60]
+        elif self._mode == "5s":
+            window_val, x_unit = 300, "s"
+            x_ticks = [0, 75, 150, 225, 300]
+        else:
+            window_val, x_unit = 60, "s"
+            x_ticks = [0, 15, 30, 45, 60]
+        x_label_w = 30
+        for age in x_ticks:
+            x = CHART_LEFT + (age / window_val) * chart_w
+            x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
+            p.drawText(int(x), y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
+        self._draw_text_right(p, CHART_RIGHT, y, f"←{window_val}{x_unit}")
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -244,69 +401,8 @@ class RealtimeWindow(QWidget):
         self._draw_text_right(p, 424, 28, "今日 tokens")
         self._draw_text_right(p, 424, 41, f"总量 {_format_compact(self._total())}")
 
-        # 流动柱状图：固定 BAR_WINDOW 槽，最新在左（offset=0），旧柱右移；无数据槽画 2px 基线
-        now_sec = int(time.time())
-        chart_w = CHART_RIGHT - CHART_LEFT
-        chart_h = CHART_BOTTOM - CHART_TOP
-        step = chart_w / BAR_WINDOW
-        bar_w = max(1.0, step * 0.6)
-        if self._mode == "min":
-            buckets = self._merged(self._bars_min)
-            unit_label = "tok/min"
-            cur = now_sec // 60 * 60  # 当前分钟起点
-            slot_of = lambda i: cur - i * 60
-        elif self._mode == "5s":
-            buckets = self._merged(self._bars_5s)
-            unit_label = "tok/5s"
-            cur = now_sec // 5 * 5  # 当前 5 秒窗起点
-            slot_of = lambda i: cur - i * 5
+        # 柱状图主体：按显示方式（合并 / 分渠道多图）
+        if self._view_mode == "split":
+            self._paint_split_charts(p)
         else:
-            buckets = self._merged(self._bars_sec)
-            unit_label = "tok"
-            cur = now_sec
-            slot_of = lambda i: cur - i
-        max_tokens = max(buckets.values(), default=0) or 1
-
-        # 纵轴刻度（单位随模式）：0 / 一半 / 满刻度
-        p.setPen(MUTED)
-        fy = QFont("Segoe UI", 7)
-        p.setFont(fy)
-        self._draw_text_right(p, CHART_LEFT - 6, CHART_TOP - 12, unit_label)
-        for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
-            y = CHART_BOTTOM - int(chart_h * frac)
-            self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
-        # 刻度线
-        p.setPen(QColor(255, 255, 255, 25))
-        for frac in (1.0, 0.5, 0.0):
-            y = CHART_BOTTOM - int(chart_h * frac)
-            p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
-
-        for offset in range(BAR_WINDOW):
-            tokens = buckets.get(slot_of(offset), 0)
-            x = CHART_LEFT + offset * step
-            h = max(2.0, chart_h * tokens / max_tokens)
-            p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
-            p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
-
-        p.setPen(QColor(255, 255, 255, 30))
-        p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
-
-        # 横轴时间刻度：0（最新）→ 窗口上限（最旧），单位随模式（s / min）
-        p.setPen(MUTED)
-        fx = QFont("Segoe UI", 7)
-        p.setFont(fx)
-        if self._mode == "min":
-            window_val, x_unit = 60, "min"
-            x_ticks = [0, 15, 30, 45, 60]
-        elif self._mode == "5s":
-            window_val, x_unit = 300, "s"
-            x_ticks = [0, 75, 150, 225, 300]
-        else:
-            window_val, x_unit = 60, "s"
-            x_ticks = [0, 15, 30, 45, 60]
-        x_label_w = 30
-        for age in x_ticks:
-            x = CHART_LEFT + (age / window_val) * chart_w
-            x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
-            p.drawText(int(x), CHART_BOTTOM + 4, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
-        self._draw_text_right(p, CHART_RIGHT, CHART_BOTTOM + 4, f"←{window_val}{x_unit}")
+            self._paint_combined_chart(p)
