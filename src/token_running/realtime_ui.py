@@ -151,17 +151,20 @@ class RealtimeWindow(QWidget):
         bar_w = max(1.0, step * 0.6)
         if self._mode == "min":
             buckets = self._bars_min
-            unit_label = "tokens/min"
+            unit_label = "tok/min"
+            slot_sec = 60
             cur = now_sec // 60 * 60  # 当前分钟起点
             slot_of = lambda i: cur - i * 60
         elif self._mode == "5s":
             buckets = self._bars_5s
-            unit_label = "tokens/5s"
+            unit_label = "tok/5s"
+            slot_sec = 5
             cur = now_sec // 5 * 5  # 当前 5 秒窗起点
             slot_of = lambda i: cur - i * 5
         else:
             buckets = self._bars_sec
-            unit_label = "tokens"
+            unit_label = "tok"
+            slot_sec = 1
             cur = now_sec
             slot_of = lambda i: cur - i
         max_tokens = max(buckets.values(), default=0) or 1
@@ -189,3 +192,23 @@ class RealtimeWindow(QWidget):
 
         p.setPen(QColor(255, 255, 255, 30))
         p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
+
+        # 横轴时间刻度：0（最新）→ 窗口上限（最旧），单位随模式（s / min）
+        p.setPen(MUTED)
+        fx = QFont("Segoe UI", 7)
+        p.setFont(fx)
+        if self._mode == "min":
+            window_val, x_unit = 60, "min"
+            x_ticks = [0, 15, 30, 45, 60]
+        elif self._mode == "5s":
+            window_val, x_unit = 300, "s"
+            x_ticks = [0, 75, 150, 225, 300]
+        else:
+            window_val, x_unit = 60, "s"
+            x_ticks = [0, 15, 30, 45, 60]
+        x_label_w = 30
+        for age in x_ticks:
+            x = CHART_LEFT + (age / window_val) * chart_w
+            x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
+            p.drawText(int(x), CHART_BOTTOM + 4, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
+        p.drawText(CHART_RIGHT - 30, CHART_BOTTOM + 4, 30, 10, Qt.AlignmentFlag.AlignRight, f"←{window_val}{x_unit}")
