@@ -422,7 +422,6 @@ class RealtimeWindow(QWidget):
             x = CHART_LEFT + (age / window_val) * chart_w
             x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
             p.drawText(int(x), y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
-        self._draw_text_right(p, CHART_RIGHT, y, f"←{window_val}{x_unit}")
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
