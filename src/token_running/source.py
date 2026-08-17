@@ -102,3 +102,18 @@ class TokenSource:
 
     def daily_total(self) -> int:
         return self._daily_total
+
+    def total(self) -> int:
+        """全时段累计消耗（DB 全量 SUM，不随跨天重置）；失败返回 0。"""
+        if not self._online:
+            self._init()
+        if not self._conn:
+            return 0
+        try:
+            row = self._conn.execute(
+                f"SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens),0)"
+                f" FROM proxy_request_logs"
+            ).fetchone()
+            return int(row[0])
+        except sqlite3.Error:
+            return 0

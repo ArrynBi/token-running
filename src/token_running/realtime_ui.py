@@ -12,7 +12,7 @@ from token_running.source import TokenSource
 
 WIDTH, HEIGHT = 440, 160
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
-CHART_LEFT, CHART_TOP = 16, 34
+CHART_LEFT, CHART_TOP = 42, 54   # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
 CHART_RIGHT, CHART_BOTTOM = 424, 140
 BG_COLOR = QColor(13, 17, 28, 224)
 BAR_COLOR = QColor(94, 200, 130, 210)
@@ -101,6 +101,12 @@ class RealtimeWindow(QWidget):
         p.setFont(f)
         p.drawText(38, 20, "TOKEN RUNNING" + (" · 实时" if online else " · 离线"))
 
+        # 总量（全时段累计，标题下方小字）
+        p.setPen(MUTED)
+        f4 = QFont("Segoe UI", 8)
+        p.setFont(f4)
+        p.drawText(38, 38, 170, 14, Qt.AlignmentFlag.AlignLeft, f"总量 {_format_compact(self._source.total())}")
+
         # 当日总消耗（大数字，右上）
         p.setPen(TEXT_COLOR)
         f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
@@ -118,6 +124,21 @@ class RealtimeWindow(QWidget):
         step = chart_w / BAR_WINDOW
         bar_w = max(1.0, step * 0.6)
         max_tokens = max(self._bars.values(), default=0) or 1
+
+        # 纵轴刻度（单位 tokens）：0 / 一半 / 满刻度
+        p.setPen(MUTED)
+        fy = QFont("Segoe UI", 7)
+        p.setFont(fy)
+        p.drawText(2, CHART_TOP - 12, CHART_LEFT - 6, 10, Qt.AlignmentFlag.AlignRight, "tokens")
+        for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
+            y = CHART_BOTTOM - int(chart_h * frac)
+            p.drawText(2, y - 4, CHART_LEFT - 6, 10, Qt.AlignmentFlag.AlignRight, _format_compact(val))
+        # 刻度线
+        p.setPen(QColor(255, 255, 255, 25))
+        for frac in (1.0, 0.5, 0.0):
+            y = CHART_BOTTOM - int(chart_h * frac)
+            p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+
         for offset in range(BAR_WINDOW):
             sec = now_sec - offset  # offset=0 当前秒（最左），offset=59 最旧（最右）
             tokens = self._bars.get(sec, 0)

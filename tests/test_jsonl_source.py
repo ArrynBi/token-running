@@ -92,3 +92,23 @@ def test_offline_when_dir_missing(tmp_path):
     assert src.online() is False
     assert src.poll() == []
     assert src.daily_total() == 0
+
+
+def test_total_includes_all_days(tmp_path):
+    # total() 是全时段累计：昨日 + 今日都计入
+    _write_jsonl(tmp_path / "a.jsonl", [
+        _assistant(_iso(DAY_START - 86400), {"input_tokens": 100, "output_tokens": 0,
+                                              "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}),
+        _assistant(_iso(DAY_START), {"input_tokens": 50, "output_tokens": 50,
+                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}),
+    ])
+    src = JsonlSource(tmp_path, now_fn=lambda: DAY_START + 3600)
+    src.poll()
+    assert src.daily_total() == 100      # 今日
+    assert src.total() == 200            # 全时段（含昨日 100）
+
+
+def test_total_empty_when_offline(tmp_path):
+    src = JsonlSource(tmp_path / "nope", now_fn=lambda: DAY_START + 3600)
+    assert src.total() == 0
+

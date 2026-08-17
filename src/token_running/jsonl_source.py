@@ -47,6 +47,7 @@ class JsonlSource:
     def _init(self) -> None:
         self._day_key = self._today()
         self._daily_total = 0
+        self._grand_total = 0
         try:
             if self._dir.exists():
                 for f in self._dir.rglob("*.jsonl"):
@@ -107,10 +108,11 @@ class JsonlSource:
         except OSError:
             return events
 
-        # 按秒分桶聚合 + 累计当日（只统计今日）
+        # 按秒分桶聚合 + 累计当日（只统计今日）；总量累计全部（含历史日）
         day_start = self._day_start()
         bucketed: dict[int, int] = {}
         for ev in events:
+            self._grand_total += ev.tokens
             if ev.ts >= day_start:
                 bucketed[ev.ts] = bucketed.get(ev.ts, 0) + ev.tokens
                 self._daily_total += ev.tokens
@@ -143,3 +145,7 @@ class JsonlSource:
 
     def daily_total(self) -> int:
         return self._daily_total
+
+    def total(self) -> int:
+        """全时段累计消耗（含历史日，不随跨天重置）。"""
+        return self._grand_total
