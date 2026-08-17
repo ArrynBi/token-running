@@ -24,7 +24,13 @@ def make_db(path, rows):
     con.close()
 
 
-DAY_START = 1_700_000_000  # 固定的"今日 0 点"epoch 秒
+def _local_midnight(ts: float) -> int:
+    """给定 epoch 秒所在本地日期的 0 点（epoch 秒），与 TokenSource._day_start 语义一致。"""
+    t = time.localtime(ts)
+    return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+
+
+DAY_START = _local_midnight(1_700_000_000)  # 本机时区"今日 0 点"epoch 秒（固定基准日）
 
 
 def test_poll_returns_all_rows_once(tmp_path):
