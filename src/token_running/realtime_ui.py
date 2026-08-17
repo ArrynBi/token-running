@@ -172,11 +172,13 @@ class RealtimeWindow(QWidget):
                 src.set_windows(today_since, total_since)
         self.update()
 
+    SPLIT_AXIS_H = 20           # 分渠道模式底部给横轴时间刻度预留的高度
+
     def _refresh_height(self) -> None:
-        """合并模式固定 160 高；分渠道模式按启用渠道数增高（每渠道一行）。"""
+        """合并模式固定高度；分渠道模式按启用渠道数增高（每渠道一行 + 底部横轴区）。"""
         if self._view_mode == "split":
             n = sum(1 for c in self._bar_order if c in self._enabled) or 1
-            self.setFixedSize(WIDTH, CHART_TOP + n * SPLIT_ROW_H + 6)
+            self.setFixedSize(WIDTH, CHART_TOP + n * SPLIT_ROW_H + self.SPLIT_AXIS_H)
         else:
             self.setFixedSize(WIDTH, HEIGHT)
 
@@ -357,7 +359,7 @@ class RealtimeWindow(QWidget):
         bar_w = max(1.0, step * 0.6)
         enabled = [n for n in self._bar_order if n in self._enabled]
         n = len(enabled) or 1
-        row_h = (self.height() - CHART_TOP - 6) / n
+        row_h = (self.height() - CHART_TOP - self.SPLIT_AXIS_H) / n
         label_map = {"dsh": "DSH", "claude": "CLAUDE", "codex": "CODEX", "opencode": "OPENCODE", "custom": "CUSTOM"}
         cur = self._mode_cur(self._mode, now_sec)
 
@@ -399,8 +401,8 @@ class RealtimeWindow(QWidget):
             p.setPen(QColor(255, 255, 255, 25))
             p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
 
-        # 最底部一行画横轴刻度
-        self._paint_x_axis(p, now_sec, chart_w, int(self.height() - 10))
+        # 底部预留区画横轴刻度（避免被遮挡）
+        self._paint_x_axis(p, now_sec, chart_w, int(self.height() - self.SPLIT_AXIS_H + 4))
 
     def _paint_x_axis(self, p: QPainter, now_sec: int, chart_w: float, y: int) -> None:
         p.setPen(MUTED)
