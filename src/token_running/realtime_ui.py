@@ -322,11 +322,14 @@ class RealtimeWindow(QWidget):
         for i, name in enumerate(enabled):
             y_top = CHART_TOP + i * row_h
             y_bot = y_top + row_h
-            # 渠道名（左上）
+            # 渠道名独占顶部一行（不跟纵轴数字同带）
             p.setPen(MUTED)
             p.setFont(QFont("Segoe UI", 8))
-            p.drawText(4, y_top, 36, 14, Qt.AlignmentFlag.AlignLeft, label_map.get(name, name.upper()))
-            # 该渠道桶（按当前时间粒度）
+            p.drawText(4, y_top, 60, 14, Qt.AlignmentFlag.AlignLeft, label_map.get(name, name.upper()))
+            # 柱状图区（渠道名行之下）
+            chart_top = y_top + 16
+            chart_bot = y_bot - 2
+            row_h_chart = chart_bot - chart_top
             if self._mode == "min":
                 buckets = self._bars_min.get(name, {})
             elif self._mode == "5s":
@@ -334,18 +337,23 @@ class RealtimeWindow(QWidget):
             else:
                 buckets = self._bars_sec.get(name, {})
             max_tokens = max(buckets.values(), default=0) or 1
-            row_h_chart = row_h - 18  # 留渠道名行
-            # 纵轴单位 + 最大值（该行右对齐）
+            # 纵轴：单位 + 两个刻度（max / max/2），画在柱状图区左侧，配两条横线
             p.setFont(QFont("Segoe UI", 7))
-            self._draw_text_right(p, CHART_LEFT - 6, y_top + 2, unit_label)
-            self._draw_text_right(p, CHART_LEFT - 6, y_top + 12, _format_compact(max_tokens))
+            self._draw_text_right(p, CHART_LEFT - 6, chart_top - 12, unit_label)
+            for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2)]:
+                y = chart_bot - int(row_h_chart * frac)
+                self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
+            p.setPen(QColor(255, 255, 255, 25))
+            for frac in (1.0, 0.5):
+                y = chart_bot - int(row_h_chart * frac)
+                p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图
             for offset in range(BAR_WINDOW):
                 tokens = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
                 h = max(2.0, row_h_chart * tokens / max_tokens)
                 p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
-                p.drawRect(int(x), int(y_top + 18 + row_h_chart - h), int(bar_w), int(h))
+                p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
             p.setPen(QColor(255, 255, 255, 25))
             p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
