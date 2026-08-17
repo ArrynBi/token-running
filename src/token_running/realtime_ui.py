@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-from collections import deque
 
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
@@ -35,7 +34,7 @@ class RealtimeWindow(QWidget):
     def __init__(self, source: TokenSource | None = None) -> None:
         super().__init__(None)
         self._source = source or TokenSource()
-        self._bars: deque[tuple[int, int]] = deque()  # (ts, tokens)，按时间升序
+        self._bars: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶
         self._drag_offset: QPoint | None = None
 
         self.setWindowTitle("Token Running")
@@ -56,10 +55,10 @@ class RealtimeWindow(QWidget):
 
     def _tick(self) -> None:
         for ev in self._source.poll():
-            self._bars.append((ev.ts, ev.tokens))
+            self._bars[ev.ts] = self._bars.get(ev.ts, 0) + ev.tokens
         cutoff = int(time.time()) - BAR_WINDOW
-        while self._bars and self._bars[0][0] < cutoff:
-            self._bars.popleft()
+        for ts in [t for t in self._bars if t < cutoff]:
+            del self._bars[ts]
         self.update()
 
     # ---- 拖动 ----
@@ -105,21 +104,20 @@ class RealtimeWindow(QWidget):
         p.setFont(f3)
         p.drawText(220, 28, 424, 14, Qt.AlignmentFlag.AlignRight, "今日 tokens")
 
-        # 流动柱状图：最新在左，旧柱右移
+        # 流动柱状图：固定 60 秒槽，最新在左（offset=0），旧柱右移；无数据秒画 2px 基线
         now_sec = int(time.time())
-        visible = [b for b in self._bars if b[0] > now_sec - BAR_WINDOW]
-        max_tokens = max((b[1] for b in visible), default=0) or 1
         chart_w = CHART_RIGHT - CHART_LEFT
         chart_h = CHART_BOTTOM - CHART_TOP
-        if visible:
-            step = chart_w / BAR_WINDOW
-            bar_w = max(1.0, step * 0.6)
-            for idx, (ts, tokens) in enumerate(visible):
-                age = now_sec - ts
-                x = CHART_LEFT + age * step  # 最新(age=0)在最左，越旧越右
-                h = max(2.0, chart_h * tokens / max_tokens)
-                p.setBrush(BAR_DIM if age > 40 else BAR_COLOR)
-                p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
+        step = chart_w / BAR_WINDOW
+        bar_w = max(1.0, step * 0.6)
+        max_tokens = max(self._bars.values(), default=0) or 1
+        for offset in range(BAR_WINDOW):
+            sec = now_sec - offset  # offset=0 当前秒（最左），offset=59 最旧（最右）
+            tokens = self._bars.get(sec, 0)
+            x = CHART_LEFT + offset * step
+            h = max(2.0, chart_h * tokens / max_tokens)
+            p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
+            p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
         p.setPen(QColor(255, 255, 255, 30))
         p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
