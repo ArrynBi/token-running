@@ -42,7 +42,8 @@ class RealtimeWindow(QWidget):
             self._channels = {
                 "dsh": DeepseekTraceSource(),
                 "claude": JsonlSource(),
-                "codex": TokenSource(app_types=["codex", "opencode"]),  # DB 排除 claude 避免与 JSONL 重复
+                "codex": TokenSource(app_types=["codex"]),      # DB 排除 claude 避免与 JSONL 重复
+                "opencode": TokenSource(app_types=["opencode"]),
             }
         self._enabled: set[str] = set(self._channels.keys())  # 默认全选
         self._bar_order = list(self._channels.keys())
@@ -166,7 +167,7 @@ class RealtimeWindow(QWidget):
         return any(src.online() for name, src in self._channels.items() if name in self._enabled)
 
     def _channel_label(self) -> str:
-        label_map = {"dsh": "DSH", "claude": "CLAUDE", "codex": "CODEX", "custom": "CUSTOM"}
+        label_map = {"dsh": "DSH", "claude": "CLAUDE", "codex": "CODEX", "opencode": "OPENCODE", "custom": "CUSTOM"}
         parts = [label_map.get(n, n.upper()) for n in self._bar_order if n in self._enabled]
         return "+".join(parts) if parts else "OFF"
 
@@ -187,7 +188,12 @@ class RealtimeWindow(QWidget):
         title_act = QAction("显示渠道", menu)
         title_act.setEnabled(False)
         menu.addAction(title_act)
-        for ch, label in (("dsh", "DSH（DeepSeek）"), ("claude", "Claude Code"), ("codex", "Codex / Opencode")):
+        for ch, label in (
+            ("dsh", "DSH（DeepSeek）"),
+            ("claude", "Claude Code"),
+            ("codex", "Codex"),
+            ("opencode", "Opencode"),
+        ):
             if ch not in self._channels:
                 continue
             act = QAction(label, menu)
