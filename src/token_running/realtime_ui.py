@@ -16,7 +16,7 @@ WIDTH, HEIGHT = 440, 160
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
 CHART_LEFT, CHART_TOP = 42, 54   # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
 CHART_RIGHT, CHART_BOTTOM = 424, 140
-BG_COLOR = QColor(13, 17, 28, 224)
+BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
 BAR_COLOR = QColor(94, 200, 130, 210)
 BAR_DIM = QColor(94, 200, 130, 60)
 TEXT_COLOR = QColor(235, 240, 248, 230)
@@ -40,11 +40,14 @@ class RealtimeWindow(QWidget):
             self._source = source
         else:
             # 合并源：DSH 轨迹 + Claude JSONL + cc-switch DB（codex/opencode；DB 排除 claude 避免与 JSONL 重复）
-            self._source = CombinedSource([
-                DeepseekTraceSource(),
-                JsonlSource(),
-                TokenSource(app_types=["codex", "opencode"]),
-            ])
+            self._source = CombinedSource(
+                [
+                    DeepseekTraceSource(),
+                    JsonlSource(),
+                    TokenSource(app_types=["codex", "opencode"]),
+                ],
+                names=["dsh", "claude", "codex"],
+            )
         self._bars_sec: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶（秒级视图）
         self._bars_5s: dict[int, int] = {}   # 5 秒起点(epoch 秒) -> 该 5 秒窗全量 tokens 桶（5 秒级视图）
         self._bars_min: dict[int, int] = {}  # 分钟起点(epoch 秒) -> 该分钟全量 tokens 桶（分钟视图）
@@ -58,6 +61,7 @@ class RealtimeWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setFixedSize(WIDTH, HEIGHT)
 
         self._timer = QTimer(self)
@@ -127,6 +131,15 @@ class RealtimeWindow(QWidget):
         self._mode = mode
         self.update()
 
+    def _set_channel(self, channel: str, enabled: bool) -> None:
+        if isinstance(self._source, CombinedSource):
+            self._source.set_channel_enabled(channel, enabled)
+            # 渠道变更后清空已聚合桶，避免禁用渠道的旧数据残留
+            self._bars_sec.clear()
+            self._bars_5s.clear()
+            self._bars_min.clear()
+            self.update()
+
     def _build_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint)
@@ -139,6 +152,18 @@ class RealtimeWindow(QWidget):
             act.triggered.connect(lambda checked=False, k=key: self._set_mode(k))
             group.addAction(act)
             menu.addAction(act)
+        menu.addSeparator()
+        # 渠道多选：只显示选中的来源（DSH / Claude Code / Codex）
+        title_act = QAction("显示渠道", menu)
+        title_act.setEnabled(False)
+        menu.addAction(title_act)
+        if isinstance(self._source, CombinedSource):
+            for ch, label in (("dsh", "DSH（DeepSeek）"), ("claude", "Claude Code"), ("codex", "Codex / Opencode")):
+                act = QAction(label, menu)
+                act.setCheckable(True)
+                act.setChecked(self._source.is_channel_enabled(ch))
+                act.toggled.connect(lambda checked, c=ch: self._set_channel(c, checked))
+                menu.addAction(act)
         menu.addSeparator()
         quit_act = menu.addAction("退出")
         quit_act.triggered.connect(self.close)

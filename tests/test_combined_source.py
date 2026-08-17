@@ -52,3 +52,28 @@ def test_online_any_source(tmp_path):
     assert CombinedSource([FakeSrc(online=False), FakeSrc(online=True)], now_fn=lambda: DAY_START + 3600).online() is True
     assert CombinedSource([FakeSrc(online=False)], now_fn=lambda: DAY_START + 3600).online() is False
     assert CombinedSource([], now_fn=lambda: DAY_START + 3600).online() is False
+
+
+def test_channel_filter(tmp_path):
+    dsh = FakeSrc(daily=1000, total=5000, events=[UsageEvent(DAY_START + 1, 100)])
+    claude = FakeSrc(daily=2000, total=6000, events=[UsageEvent(DAY_START + 2, 200)])
+    codex = FakeSrc(daily=3000, total=7000, events=[UsageEvent(DAY_START + 3, 300)])
+    src = CombinedSource([dsh, claude, codex], names=["dsh", "claude", "codex"], now_fn=lambda: DAY_START + 3600)
+    assert src.enabled_channels() == ["dsh", "claude", "codex"]
+    assert src.daily_total() == 6000
+
+    # 只显示 codex
+    src.set_channel_enabled("dsh", False)
+    src.set_channel_enabled("claude", False)
+    assert src.enabled_channels() == ["codex"]
+    assert src.daily_total() == 3000
+    events = src.poll()
+    assert events == [UsageEvent(DAY_START + 3, 300)]
+
+    # 显示两个：dsh + claude
+    src.set_channel_enabled("dsh", True)
+    src.set_channel_enabled("claude", True)
+    src.set_channel_enabled("codex", False)
+    assert src.enabled_channels() == ["dsh", "claude"]
+    assert src.daily_total() == 3000
+    assert src.total() == 11000
