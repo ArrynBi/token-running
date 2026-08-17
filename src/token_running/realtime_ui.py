@@ -390,15 +390,20 @@ class RealtimeWindow(QWidget):
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
         p.drawText(38, 20, f"TOKEN RUNNING · " + ("实时" if online else "离线") + f" · {mode_text}")
 
-        # 右上角：今日数字（与「今日」同排）+ 总量（全时段累计），贴右缘对齐
-        p.setPen(TEXT_COLOR)
+        # 右上角：今日（8pt 小字）与数字（17pt 大字）同排，右缘对齐；下方总量紧跟无空行
+        f3 = QFont("Segoe UI", 8)
         f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
         p.setFont(f2)
-        self._draw_text_right(p, 436, 10, f"今日 {_format_compact(self._daily_total())}")
-        p.setPen(MUTED)
-        f3 = QFont("Segoe UI", 8)
+        p.setPen(TEXT_COLOR)
+        fm2 = p.fontMetrics()
+        num_text = _format_compact(self._daily_total())
+        num_w = fm2.horizontalAdvance(num_text)
+        p.drawText(436 - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
         p.setFont(f3)
-        self._draw_text_right(p, 436, 42, f"总量 {_format_compact(self._total())}")
+        p.setPen(MUTED)
+        fm3 = p.fontMetrics()
+        p.drawText(436 - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
+        self._draw_text_right(p, 436, 40, f"总量 {_format_compact(self._total())}")  # 紧跟今日行下方
 
         # 柱状图主体：按显示方式（合并 / 分渠道多图）
         if self._view_mode == "split":
