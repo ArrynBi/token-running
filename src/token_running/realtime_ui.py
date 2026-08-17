@@ -390,15 +390,14 @@ class RealtimeWindow(QWidget):
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
         p.drawText(38, 20, f"TOKEN RUNNING · " + ("实时" if online else "离线") + f" · {mode_text}")
 
-        # 右上角：当日大数字 + 今日标签 + 总量（全时段累计），贴右缘对齐
+        # 右上角：今日数字（与「今日」同排）+ 总量（全时段累计），贴右缘对齐
         p.setPen(TEXT_COLOR)
         f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
         p.setFont(f2)
-        self._draw_text_right(p, 436, 10, _format_compact(self._daily_total()))
+        self._draw_text_right(p, 436, 10, f"今日 {_format_compact(self._daily_total())}")
         p.setPen(MUTED)
         f3 = QFont("Segoe UI", 8)
         p.setFont(f3)
-        self._draw_text_right(p, 436, 29, "今日 tokens")
         self._draw_text_right(p, 436, 42, f"总量 {_format_compact(self._total())}")
 
         # 柱状图主体：按显示方式（合并 / 分渠道多图）
