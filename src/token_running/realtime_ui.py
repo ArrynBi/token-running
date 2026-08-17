@@ -277,7 +277,6 @@ class RealtimeWindow(QWidget):
             buckets = self._merged(self._bars_5s)
         else:
             buckets = self._merged(self._bars_sec)
-        unit_label = self._mode_unit(self._mode)
         cur = self._mode_cur(self._mode, now_sec)
         max_tokens = max(buckets.values(), default=0) or 1
 
@@ -285,7 +284,6 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        self._draw_text_right(p, CHART_LEFT - 6, CHART_TOP - 12, unit_label)
         for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2), (0.0, 0)]:
             y = CHART_BOTTOM - int(chart_h * frac)
             self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
@@ -316,7 +314,6 @@ class RealtimeWindow(QWidget):
         n = len(enabled) or 1
         row_h = (self.height() - CHART_TOP - 6) / n
         label_map = {"dsh": "DSH", "claude": "CLAUDE", "codex": "CODEX", "opencode": "OPENCODE", "custom": "CUSTOM"}
-        unit_label = self._mode_unit(self._mode)
         cur = self._mode_cur(self._mode, now_sec)
 
         for i, name in enumerate(enabled):
@@ -337,9 +334,8 @@ class RealtimeWindow(QWidget):
             else:
                 buckets = self._bars_sec.get(name, {})
             max_tokens = max(buckets.values(), default=0) or 1
-            # 纵轴：单位 + 两个刻度（max / max/2），画在柱状图区左侧（渠道名带之下），配两条横线
+            # 纵轴：两个刻度（max / max/2），画在柱状图区左侧（渠道名带之下），配两条横线
             p.setFont(QFont("Segoe UI", 7))
-            self._draw_text_right(p, CHART_LEFT - 6, y_top + 17, unit_label)
             for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2)]:
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
