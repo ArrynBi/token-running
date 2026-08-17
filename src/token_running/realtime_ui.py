@@ -11,7 +11,7 @@ from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
 from token_running.source import TokenSource
 
-WIDTH, HEIGHT = 440, 160
+WIDTH, HEIGHT = 440, 170   # 底部多留空间给横轴时间刻度，避免被遮挡
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
 CHART_LEFT, CHART_TOP = 42, 52    # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
 CHART_RIGHT, CHART_BOTTOM = 424, 146  # 图表区向下扩展，占用更多空间
