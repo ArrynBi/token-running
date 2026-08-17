@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
+from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
 from token_running.source import TokenSource
 
@@ -37,8 +38,10 @@ class RealtimeWindow(QWidget):
         if source is not None:
             self._source = source
         else:
-            # 秒级主源：JSONL 直读（消息完成即入库）；JSONL 不可用时回退 cc-switch DB（60s 同步）
-            self._source = JsonlSource()
+            # 主源优先级：DSH 轨迹（DeepSeek harness 实时）→ JSONL（Claude Code 秒级）→ cc-switch DB（60s 兜底）
+            self._source = DeepseekTraceSource()
+            if not self._source.online():
+                self._source = JsonlSource()
             if not self._source.online():
                 self._source = TokenSource()
         self._bars_sec: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶（秒级视图）
@@ -122,7 +125,12 @@ class RealtimeWindow(QWidget):
         f = QFont("Segoe UI", 9)
         p.setFont(f)
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
-        p.drawText(38, 20, "TOKEN RUNNING · " + ("实时" if online else "离线") + " · " + mode_text)
+        source_name = {
+            "DeepseekTraceSource": "DSH",
+            "JsonlSource": "CLAUDE",
+            "TokenSource": "CC-DB",
+        }.get(type(self._source).__name__, "?")
+        p.drawText(38, 20, f"TOKEN RUNNING · {source_name} · " + ("实时" if online else "离线") + f" · {mode_text}")
 
         # 右上角：当日大数字 + 今日标签 + 总量（全时段累计）
         p.setPen(TEXT_COLOR)
