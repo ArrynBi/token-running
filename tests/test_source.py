@@ -110,3 +110,42 @@ def test_app_type_filter_poll(tmp_path):
     con.close()
     events = src.poll()
     assert len(events) == 1 and events[0].tokens == 100  # 只返回 codex 事件（100），claude 被排除
+
+
+def test_total_respects_app_types(tmp_path):
+    make_db(tmp_path / "t.db", [
+        (DAY_START - 86400, "claude", 100, 0, 0, 0),
+        (DAY_START - 86400, "codex", 50, 0, 0, 0),
+        (DAY_START, "claude", 10, 0, 0, 0),
+        (DAY_START, "codex", 20, 0, 0, 0),
+    ])
+    src = TokenSource(tmp_path / "t.db", now_fn=lambda: DAY_START + 3600, app_types=["codex"])
+    src.poll()
+    assert src.daily_total() == 20          # 今日 codex
+    assert src.total() == 70                # 全时段 codex（50+20），claude 不计入
+
+
+def test_window_caliber(tmp_path):
+    # 今日口径：自然日0点 vs 近24h；总量口径：全时段 vs 近30天
+    make_db(tmp_path / "t.db", [
+        (DAY_START, "claude", 100, 0, 0, 0),          # 今日0点
+        (DAY_START + 3600, "claude", 50, 0, 0, 0),    # 今日+1h
+    ])
+    now = DAY_START + 7200
+    src = TokenSource(tmp_path / "t.db", now_fn=lambda: now)
+    src.poll()
+    # 默认：今日=自然日0点起 → 150；总量=全时段 → 150
+    assert src.daily_total() == 150
+    assert src.total() == 150
+
+    # 今日口径改近24h：起点 now-86400 = DAY_START+7200-86400 < DAY_START → 仍 150
+    src.set_windows(today_since=now - 86400, total_since=None)
+    assert src.daily_total() == 150
+
+    # 总量口径近1天：起点 now-86400 → 仍全计
+    src.set_windows(today_since=None, total_since=now - 86400)
+    assert src.total() == 150
+
+    # 今日口径起点设为 DAY_START+1800：只计 +3600 那条 → 50
+    src.set_windows(today_since=DAY_START + 1800, total_since=None)
+    assert src.daily_total() == 50

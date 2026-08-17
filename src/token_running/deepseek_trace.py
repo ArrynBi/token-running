@@ -38,7 +38,39 @@ class DeepseekTraceSource:
         self._grand_total = 0
         self._day_key: str | None = None
         self._online = False
+        self._today_since: int | None = None   # 今日口径起点（None=自然日 0 点）
+        self._total_since: int | None = None   # 总量口径起点（None=全时段）
         self._init()
+
+    def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
+        """设置统计口径窗口起点；之后全量重扫轨迹重算累计。"""
+        self._today_since = today_since
+        self._total_since = total_since
+        self._rescan()
+
+    def _rescan(self) -> None:
+        if not self._dir.exists():
+            self._daily_total = 0
+            self._grand_total = 0
+            return
+        day_start = self._today_since if self._today_since is not None else self._day_start()
+        total_start = self._total_since if self._total_since is not None else 0
+        d = t = 0
+        for f in self._dir.rglob("session.jsonl.zstd"):
+            try:
+                full = self._decompress(f)
+                for line in full.splitlines():
+                    ev = self._parse_line(line)
+                    if ev is None:
+                        continue
+                    if ev.ts >= total_start:
+                        t += ev.tokens
+                        if ev.ts >= day_start:
+                            d += ev.tokens
+            except Exception:
+                continue
+        self._daily_total = d
+        self._grand_total = t
 
     def _scan_files(self) -> None:
         if not self._dir.exists():

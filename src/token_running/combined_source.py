@@ -56,6 +56,12 @@ class CombinedSource:
     def _active(self) -> list:
         return [self._sources[i] for i in sorted(self._enabled)]
 
+    def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
+        """透传统计口径窗口起点到所有子源（仅对支持 set_windows 的源生效）。"""
+        for s in self._sources:
+            if hasattr(s, "set_windows"):
+                s.set_windows(today_since, total_since)
+
     def online(self) -> bool:
         return any(s.online() for s in self._active())
 

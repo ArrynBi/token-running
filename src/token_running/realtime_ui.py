@@ -53,6 +53,8 @@ class RealtimeWindow(QWidget):
         self._bars_min: dict[str, dict[int, int]] = {n: {} for n in self._channels}
         self._mode: str = "sec"              # "sec" 秒级 60s 窗口 | "5s" 5 秒级 300s 窗口 | "min" 分钟级 60min 窗口
         self._view_mode: str = "combined"    # "combined" 合并单图 | "split" 分渠道多图（上下排列）
+        self._today_caliber: str = "day"     # 今日口径："day" 自然日 | "24h" 近24小时
+        self._total_caliber: str = "all"     # 总量口径："all" 全时段 | "7d" 近7天 | "30d" 近30天 | "90d" 近90天
         self._drag_offset: QPoint | None = None
 
         self.setWindowTitle("Token Running")
@@ -150,6 +152,26 @@ class RealtimeWindow(QWidget):
         self._refresh_height()
         self.update()
 
+    def _set_caliber(self, which: str, value: str) -> None:
+        if which == "today":
+            self._today_caliber = value
+        else:
+            self._total_caliber = value
+        self._apply_caliber()
+
+    def _apply_caliber(self) -> None:
+        now = int(time.time())
+        if self._today_caliber == "24h":
+            today_since = now - 86400
+        else:
+            today_since = None  # 自然日 0 点（各源默认）
+        total_map = {"all": None, "7d": now - 7 * 86400, "30d": now - 30 * 86400, "90d": now - 90 * 86400}
+        total_since = total_map.get(self._total_caliber, None)
+        for src in self._channels.values():
+            if hasattr(src, "set_windows"):
+                src.set_windows(today_since, total_since)
+        self.update()
+
     def _refresh_height(self) -> None:
         """合并模式固定 160 高；分渠道模式按启用渠道数增高（每渠道一行）。"""
         if self._view_mode == "split":
@@ -213,6 +235,29 @@ class RealtimeWindow(QWidget):
             vact.triggered.connect(lambda checked=False, k=key: self._set_view_mode(k))
             vgroup.addAction(vact)
             menu.addAction(vact)
+        menu.addSeparator()
+        # 统计口径：今日 / 总量
+        ctitle = QAction("统计口径", menu)
+        ctitle.setEnabled(False)
+        menu.addAction(ctitle)
+        tgroup = QActionGroup(menu)
+        tgroup.setExclusive(True)
+        for key, label in (("day", "今日 · 自然日（0点起）"), ("24h", "今日 · 近24小时")):
+            tact = QAction(label, menu)
+            tact.setCheckable(True)
+            tact.setChecked(self._today_caliber == key)
+            tact.triggered.connect(lambda checked=False, k=key: self._set_caliber("today", k))
+            tgroup.addAction(tact)
+            menu.addAction(tact)
+        ogroup = QActionGroup(menu)
+        ogroup.setExclusive(True)
+        for key, label in (("all", "总量 · 全时段"), ("7d", "总量 · 近7天"), ("30d", "总量 · 近30天"), ("90d", "总量 · 近90天")):
+            oact = QAction(label, menu)
+            oact.setCheckable(True)
+            oact.setChecked(self._total_caliber == key)
+            oact.triggered.connect(lambda checked=False, k=key: self._set_caliber("total", k))
+            ogroup.addAction(oact)
+            menu.addAction(oact)
         menu.addSeparator()
         # 渠道多选：只显示选中的来源（DSH / Claude Code / Codex）
         title_act = QAction("显示渠道", menu)

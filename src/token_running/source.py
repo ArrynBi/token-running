@@ -41,7 +41,14 @@ class TokenSource:
         self._daily_total = 0
         self._day_key: str | None = None
         self._online = False
+        self._today_since: int | None = None   # 今日口径起点（None=本地自然日 0 点）
+        self._total_since: int | None = None   # 总量口径起点（None=全时段）
         self._init()
+
+    def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
+        """设置统计口径窗口起点（epoch 秒；None=默认：今日=自然日0点，总量=全时段）。"""
+        self._today_since = today_since
+        self._total_since = total_since
 
     def _type_clause(self) -> tuple[str, list]:
         if self._app_types is None:
@@ -111,19 +118,32 @@ class TokenSource:
         return events
 
     def daily_total(self) -> int:
+        # 默认返回增量维护的自然日累计；设置了自定义今日口径时按窗口重查
+        if self._today_since is not None:
+            return self._window_sum(self._today_since)
         return self._daily_total
 
-    def total(self) -> int:
-        """全时段累计消耗（DB 全量 SUM，不随跨天重置）；失败返回 0。"""
+    def _window_sum(self, since: int | None) -> int:
         if not self._online:
             self._init()
         if not self._conn:
             return 0
         try:
+            clause, args = self._type_clause()
+            if since is None:
+                where = "WHERE 1=1"
+            else:
+                where = "WHERE created_at >= ?"
+                args = [since] + args
             row = self._conn.execute(
                 f"SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens),0)"
-                f" FROM proxy_request_logs"
+                f" FROM proxy_request_logs {where}{clause}",
+                args,
             ).fetchone()
             return int(row[0])
         except sqlite3.Error:
             return 0
+
+    def total(self) -> int:
+        """总量口径累计（默认全时段；可经 set_windows 改为近 N 天）。"""
+        return self._window_sum(self._total_since)

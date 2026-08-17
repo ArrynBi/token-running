@@ -40,8 +40,11 @@ class JsonlSource:
         self._now = now_fn
         self._offsets: dict[Path, int] = {}  # 文件 -> 已读字节偏移
         self._daily_total = 0
+        self._grand_total = 0
         self._day_key: str | None = None
         self._online = False
+        self._today_since: int | None = None   # 今日口径起点（None=自然日 0 点）
+        self._total_since: int | None = None   # 总量口径起点（None=全时段）
         self._init()
 
     def _init(self) -> None:
@@ -55,6 +58,37 @@ class JsonlSource:
                 self._online = True
         except OSError:
             self._online = False
+
+    def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
+        """设置统计口径窗口起点；之后全量重扫文件重算累计。"""
+        self._today_since = today_since
+        self._total_since = total_since
+        self._rescan()
+
+    def _rescan(self) -> None:
+        """按当前窗口全量重扫所有文件，重算 daily_total / grand_total。"""
+        if not self._dir.exists():
+            self._daily_total = 0
+            self._grand_total = 0
+            return
+        day_start = self._today_since if self._today_since is not None else self._day_start()
+        total_start = self._total_since if self._total_since is not None else 0
+        d = t = 0
+        for f in self._dir.rglob("*.jsonl"):
+            try:
+                with open(f, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        ev = self._parse_line(line)
+                        if ev is None:
+                            continue
+                        if ev.ts >= total_start:
+                            t += ev.tokens
+                            if ev.ts >= day_start:
+                                d += ev.tokens
+            except OSError:
+                continue
+        self._daily_total = d
+        self._grand_total = t
 
     def _today(self) -> str:
         return time.strftime("%Y-%m-%d", time.localtime(self._now()))
