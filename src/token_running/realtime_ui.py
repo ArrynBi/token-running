@@ -15,7 +15,7 @@ WIDTH, HEIGHT = 440, 160
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
 CHART_LEFT, CHART_TOP = 42, 52    # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
 CHART_RIGHT, CHART_BOTTOM = 424, 146  # 图表区向下扩展，占用更多空间
-SPLIT_ROW_H = 72             # 分渠道多图：每渠道一行的高度
+SPLIT_ROW_H = 80             # 分渠道多图：每渠道一行的高度（含顶部渠道名行与纵轴区）
 BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
 BAR_COLOR = QColor(94, 200, 130, 210)
 BAR_DIM = QColor(94, 200, 130, 60)
@@ -326,8 +326,8 @@ class RealtimeWindow(QWidget):
             p.setPen(MUTED)
             p.setFont(QFont("Segoe UI", 8))
             p.drawText(4, y_top, 60, 14, Qt.AlignmentFlag.AlignLeft, label_map.get(name, name.upper()))
-            # 柱状图区（渠道名行之下）
-            chart_top = y_top + 16
+            # 柱状图区（渠道名行之下，留足间距避免纵轴与渠道名重叠）
+            chart_top = y_top + 26
             chart_bot = y_bot - 2
             row_h_chart = chart_bot - chart_top
             if self._mode == "min":
@@ -337,9 +337,9 @@ class RealtimeWindow(QWidget):
             else:
                 buckets = self._bars_sec.get(name, {})
             max_tokens = max(buckets.values(), default=0) or 1
-            # 纵轴：单位 + 两个刻度（max / max/2），画在柱状图区左侧，配两条横线
+            # 纵轴：单位 + 两个刻度（max / max/2），画在柱状图区左侧（渠道名带之下），配两条横线
             p.setFont(QFont("Segoe UI", 7))
-            self._draw_text_right(p, CHART_LEFT - 6, chart_top - 12, unit_label)
+            self._draw_text_right(p, CHART_LEFT - 6, y_top + 17, unit_label)
             for frac, val in [(1.0, max_tokens), (0.5, max_tokens // 2)]:
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, _format_compact(val))
