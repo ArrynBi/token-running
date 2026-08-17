@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
+from token_running.combined_source import CombinedSource
 from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
 from token_running.source import TokenSource
@@ -38,12 +39,12 @@ class RealtimeWindow(QWidget):
         if source is not None:
             self._source = source
         else:
-            # 主源优先级：DSH 轨迹（DeepSeek harness 实时）→ JSONL（Claude Code 秒级）→ cc-switch DB（60s 兜底）
-            self._source = DeepseekTraceSource()
-            if not self._source.online():
-                self._source = JsonlSource()
-            if not self._source.online():
-                self._source = TokenSource()
+            # 合并源：DSH 轨迹 + Claude JSONL + cc-switch DB（codex/opencode；DB 排除 claude 避免与 JSONL 重复）
+            self._source = CombinedSource([
+                DeepseekTraceSource(),
+                JsonlSource(),
+                TokenSource(app_types=["codex", "opencode"]),
+            ])
         self._bars_sec: dict[int, int] = {}  # ts(秒) -> 该秒全量 tokens 桶（秒级视图）
         self._bars_5s: dict[int, int] = {}   # 5 秒起点(epoch 秒) -> 该 5 秒窗全量 tokens 桶（5 秒级视图）
         self._bars_min: dict[int, int] = {}  # 分钟起点(epoch 秒) -> 该分钟全量 tokens 桶（分钟视图）
@@ -126,6 +127,7 @@ class RealtimeWindow(QWidget):
         p.setFont(f)
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
         source_name = {
+            "CombinedSource": "ALL",
             "DeepseekTraceSource": "DSH",
             "JsonlSource": "CLAUDE",
             "TokenSource": "CC-DB",

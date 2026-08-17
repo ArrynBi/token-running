@@ -31,9 +31,11 @@ class TokenSource:
     - now_fn 可注入以便测试跨天逻辑
     """
 
-    def __init__(self, db_path: str | Path = DB_DEFAULT, now_fn: Callable[[], float] = time.time) -> None:
+    def __init__(self, db_path: str | Path = DB_DEFAULT, now_fn: Callable[[], float] = time.time,
+                 app_types: list[str] | None = None) -> None:
         self._db_path = db_path
         self._now = now_fn
+        self._app_types = app_types  # None=全部；否则只统计指定 app_type（供合并源排除 claude 避免与 JSONL 重复）
         self._conn: sqlite3.Connection | None = None
         self._last_rowid = 0
         self._daily_total = 0
@@ -41,13 +43,20 @@ class TokenSource:
         self._online = False
         self._init()
 
+    def _type_clause(self) -> tuple[str, list]:
+        if self._app_types is None:
+            return "", []
+        ph = ",".join("?" for _ in self._app_types)
+        return f" AND app_type IN ({ph})", list(self._app_types)
+
     def _init(self) -> None:
         try:
             self._conn = sqlite3.connect(str(self._db_path))
+            clause, args = self._type_clause()
             row = self._conn.execute(
                 f"SELECT MAX(rowid), COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens),0)"
-                f" FROM proxy_request_logs WHERE created_at >= ?",
-                (self._day_start(),),
+                f" FROM proxy_request_logs WHERE created_at >= ?{clause}",
+                [self._day_start()] + args,
             ).fetchone()
             self._last_rowid = row[0] or 0
             self._daily_total = int(row[1])
@@ -85,9 +94,10 @@ class TokenSource:
             except sqlite3.Error:
                 pass
         try:
+            clause, args = self._type_clause()
             cur = self._conn.execute(
-                f"SELECT {_SQL_COLS} FROM proxy_request_logs WHERE rowid > ? ORDER BY rowid",
-                (self._last_rowid,),
+                f"SELECT {_SQL_COLS} FROM proxy_request_logs WHERE rowid > ?{clause} ORDER BY rowid",
+                [self._last_rowid] + args,
             )
             rows = cur.fetchall()
         except sqlite3.Error:
