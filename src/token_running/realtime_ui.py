@@ -456,18 +456,25 @@ class RealtimeWindow(QWidget):
         return {"min": "tok/min", "5s": "tok/5s"}.get(mode, "tok")
 
     def _fmt_value(self, val: float) -> str:
-        """按显示模式格式化数值：tokens 用 K/M（<1 保留小数），cost 用当前货币。"""
+        """按显示模式格式化数值：tokens 用 K/M（一位小数），cost 用当前货币（两位）。"""
         if self._display == "cost":
             return _format_cost(val, self._prices.symbol())
         if val < 1:
             return f"{val:.1f}" if val > 0 else "0"
-        return _format_compact(int(val))
+        if val >= 1_000_000:
+            return f"{val / 1_000_000:.1f}M"
+        if val >= 1_000:
+            return f"{val / 1_000:.1f}K"
+        # 小于 1000：整数显示整数，否则保留一位小数（避免 1.5 -> 2 与满刻度重复）
+        if abs(val - round(val)) < 1e-9:
+            return f"{val:.0f}"
+        return f"{val:.1f}"
 
     def _nice_ticks(self, max_val: float) -> list[float]:
-        """生成整数友好的纵轴挡位（0 / 1/4 / 1/2 / 满），满刻度向上取整到 1/2/5×10^n。"""
+        """生成整数友好的纵轴挡位（0 / 1/4 / 1/2 / 3/4 / 满），满刻度向上取整到 1/2/5×10^n。"""
         import math
         if max_val <= 0:
-            return [0.0, 0.0, 0.0, 0.0]
+            return [0.0, 0.0, 0.0, 0.0, 0.0]
         # 确定步长数量级：取 max 的 1/4 向上凑到 1/2/5 系列
         quarter = max_val / 4
         mag = 10 ** math.floor(math.log10(quarter)) if quarter > 0 else 1
@@ -475,9 +482,9 @@ class RealtimeWindow(QWidget):
             step = mult * mag
             if step >= quarter:
                 break
-        # 满刻度 = step * 4（保证 1/4 挡是整数），再归一化
+        # 满刻度 = step * 4（保证 1/4 挡是整数）
         nice_max = step * 4
-        return [0.0, nice_max / 4, nice_max / 2, nice_max]
+        return [0.0, nice_max / 4, nice_max / 2, nice_max * 3 / 4, nice_max]
 
     def _paint_combined_chart(self, p: QPainter) -> None:
         """合并单图：所有启用渠道求和后一张柱状图。"""
@@ -500,11 +507,11 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        for frac, val in zip((0.0, 0.25, 0.5, 1.0), ticks):  # frac 升序对应 ticks 升序
+        for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
             y = CHART_BOTTOM - int(chart_h * frac)
             self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
         p.setPen(QColor(255, 255, 255, 25))
-        for frac in (0.0, 0.25, 0.5, 1.0):
+        for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
             y = CHART_BOTTOM - int(chart_h * frac)
             p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
 
@@ -559,11 +566,11 @@ class RealtimeWindow(QWidget):
             ticks = self._nice_ticks(max_val)
             nice_max = ticks[-1]
             p.setFont(QFont("Segoe UI", 7))
-            for frac, val in zip((0.0, 0.25, 0.5, 1.0), ticks):  # frac 升序对应 ticks 升序
+            for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
             p.setPen(QColor(255, 255, 255, 25))
-            for frac in (0.0, 0.25, 0.5, 1.0):
+            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
