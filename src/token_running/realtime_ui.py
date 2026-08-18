@@ -12,9 +12,9 @@ from token_running.jsonl_source import JsonlSource
 from token_running.pricing import PriceTable
 from token_running.source import TokenSource
 
-WIDTH, HEIGHT = 420, 170   # 底部留空间给横轴时间刻度；左侧刻度区加宽
+WIDTH, HEIGHT = 410, 170   # 底部留空间给横轴时间刻度
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
-CHART_LEFT, CHART_TOP = 44, 52    # 左侧留 28px 给纵轴刻度（容纳 100K/150K 等三位数）
+CHART_LEFT, CHART_TOP = 36, 52    # 左侧留 20px 给纵轴刻度（容纳三位数但不冗余）
 CHART_RIGHT, CHART_BOTTOM = 406, 146  # 图表区向下扩展，占用更多空间
 SPLIT_ROW_H = 80             # 分渠道多图：每渠道一行的高度（含顶部渠道名行与纵轴区）
 BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
