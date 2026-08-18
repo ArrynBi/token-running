@@ -12,10 +12,10 @@ from token_running.jsonl_source import JsonlSource
 from token_running.pricing import PriceTable
 from token_running.source import TokenSource
 
-WIDTH, HEIGHT = 410, 170   # 收窄左侧空白；底部留空间给横轴时间刻度
+WIDTH, HEIGHT = 420, 170   # 底部留空间给横轴时间刻度；左侧刻度区加宽
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
-CHART_LEFT, CHART_TOP = 30, 52    # 左侧仅留 14px 给纵轴刻度（刻度数字贴边即可）
-CHART_RIGHT, CHART_BOTTOM = 396, 146  # 图表区向下扩展，占用更多空间
+CHART_LEFT, CHART_TOP = 44, 52    # 左侧留 28px 给纵轴刻度（容纳 100K/150K 等三位数）
+CHART_RIGHT, CHART_BOTTOM = 406, 146  # 图表区向下扩展，占用更多空间
 SPLIT_ROW_H = 80             # 分渠道多图：每渠道一行的高度（含顶部渠道名行与纵轴区）
 BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
 BAR_COLOR = QColor(94, 200, 130, 210)
@@ -462,9 +462,11 @@ class RealtimeWindow(QWidget):
         if val < 1:
             return f"{val:.1f}" if val > 0 else "0"
         if val >= 1_000_000:
-            return f"{val / 1_000_000:.1f}M"
+            m = val / 1_000_000
+            return f"{m:.0f}M" if abs(m - round(m)) < 1e-9 else f"{m:.1f}M"
         if val >= 1_000:
-            return f"{val / 1_000:.1f}K"
+            k = val / 1_000
+            return f"{k:.0f}K" if abs(k - round(k)) < 1e-9 else f"{k:.1f}K"
         # 小于 1000：整数显示整数，否则保留一位小数（避免 1.5 -> 2 与满刻度重复）
         if abs(val - round(val)) < 1e-9:
             return f"{val:.0f}"
