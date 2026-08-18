@@ -406,9 +406,11 @@ class RealtimeWindow(QWidget):
     SPAN_BARS = {"full": BAR_WINDOW, "half": 30, "third": 20}
 
     def _refresh_geometry(self) -> None:
-        """按窗口跨度更新实际柱槽数与窗口宽度（完整 430 / ½ 215 / ⅓ 143）。"""
+        """按窗口跨度更新实际柱槽数、窗口宽度与图表右边界（完整 430 / ½ 215 / ⅓ 143）。"""
         self._bar_window = self.SPAN_BARS.get(self._span, BAR_WINDOW)
         self._win_w = int(WIDTH * self.SPAN_FACTOR.get(self._span, 1.0))
+        # 图表区右边界随窗口缩放（右侧留 12px 边距），避免柱状图超出窗口被截断
+        self._chart_right = max(CHART_LEFT + 40, self._win_w - 12)
         self._refresh_height()
 
     def _set_span(self, span: str) -> None:
@@ -607,7 +609,7 @@ class RealtimeWindow(QWidget):
     def _paint_combined_chart(self, p: QPainter) -> None:
         """合并单图：所有启用渠道求和后一张柱状图。"""
         now_sec = int(time.time())
-        chart_w = CHART_RIGHT - CHART_LEFT
+        chart_w = self._chart_right - CHART_LEFT
         chart_h = CHART_BOTTOM - CHART_TOP
         step = chart_w / self._bar_window
         bar_w = max(1.0, step * 0.6)
@@ -633,7 +635,7 @@ class RealtimeWindow(QWidget):
             p.setPen(self._c_grid)
             for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
                 y = CHART_BOTTOM - int(chart_h * frac)
-                p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+                p.drawLine(CHART_LEFT, y, self._chart_right, y)
 
         for offset in range(self._bar_window):
             val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
@@ -643,7 +645,7 @@ class RealtimeWindow(QWidget):
             p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
         p.setPen(self._c_axis)
-        p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
+        p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, self._chart_right, CHART_BOTTOM + 2)
         # 横轴时间刻度
         if "time" not in self._hidden:
             self._paint_x_axis(p, now_sec, chart_w, CHART_BOTTOM + 4)
@@ -651,7 +653,7 @@ class RealtimeWindow(QWidget):
     def _paint_split_charts(self, p: QPainter) -> None:
         """分渠道多图：每个启用渠道一个上下排列的柱状图。"""
         now_sec = int(time.time())
-        chart_w = CHART_RIGHT - CHART_LEFT
+        chart_w = self._chart_right - CHART_LEFT
         step = chart_w / self._bar_window
         bar_w = max(1.0, step * 0.6)
         enabled = [n for n in self._bar_order if n in self._enabled]
@@ -697,7 +699,7 @@ class RealtimeWindow(QWidget):
                 p.setPen(self._c_grid)
                 for frac in (0.0, 0.5, 1.0):
                     y = chart_bot - int(row_h_chart * frac)
-                    p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+                    p.drawLine(CHART_LEFT, y, self._chart_right, y)
             # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
             for offset in range(self._bar_window):
                 val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
@@ -707,7 +709,7 @@ class RealtimeWindow(QWidget):
                 p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
             p.setPen(self._c_grid)
-            p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
+            p.drawLine(CHART_LEFT, int(y_bot), self._chart_right, int(y_bot))
 
         # 底部预留区画横轴刻度（避免被遮挡）
         if "time" not in self._hidden:
@@ -732,7 +734,7 @@ class RealtimeWindow(QWidget):
         x_label_w = 30
         for age in x_ticks:
             x = CHART_LEFT + (age / window_val) * chart_w
-            x = max(CHART_LEFT, min(CHART_RIGHT - x_label_w, x))
+            x = max(CHART_LEFT, min(self._chart_right - x_label_w, x))
             p.drawText(int(x), y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
 
     def paintEvent(self, _event) -> None:  # noqa: N802
