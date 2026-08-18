@@ -25,6 +25,34 @@ MUTED = QColor(140, 150, 165, 200)
 GREEN = QColor(94, 200, 130)
 RED = QColor(230, 90, 90)
 
+# 皮肤定义：背景 / 柱 / 柱弱 / 文字 / 次要文字 / 绿点 / 红点 / 刻度线
+SKINS: dict[str, dict] = {
+    "dark": {
+        "name": "深色",
+        "bg": QColor(13, 17, 28, 252),
+        "bar": QColor(94, 200, 130, 210),
+        "bar_dim": QColor(94, 200, 130, 60),
+        "text": QColor(235, 240, 248, 230),
+        "muted": QColor(140, 150, 165, 200),
+        "green": QColor(94, 200, 130),
+        "red": QColor(230, 90, 90),
+        "grid": QColor(255, 255, 255, 25),
+        "axis": QColor(255, 255, 255, 30),
+    },
+    "transparent": {
+        "name": "全透明",
+        "bg": QColor(0, 0, 0, 0),          # 完全透明背景
+        "bar": QColor(94, 200, 130, 230),
+        "bar_dim": QColor(94, 200, 130, 90),
+        "text": QColor(255, 255, 255, 255),
+        "muted": QColor(255, 255, 255, 180),
+        "green": QColor(94, 200, 130),
+        "red": QColor(230, 90, 90),
+        "grid": QColor(255, 255, 255, 60),
+        "axis": QColor(255, 255, 255, 80),
+    },
+}
+
 
 def _format_compact(value: int) -> str:
     if value >= 1_000_000:
@@ -69,6 +97,8 @@ class RealtimeWindow(QWidget):
         self._drag_offset: QPoint | None = None
         self._cost_daily = 0.0   # 今日累计费用（USD）
         self._cost_total = 0.0   # 全时段累计费用（USD）
+        self._skin = "dark"     # 皮肤："dark" 深色 | "transparent" 全透明
+        self._apply_skin()
 
         self.setWindowTitle("Token Running")
         self.setWindowFlags(
@@ -196,6 +226,24 @@ class RealtimeWindow(QWidget):
     def _set_display(self, display: str) -> None:
         self._display = display
         self.update()
+
+    def _apply_skin(self) -> None:
+        s = SKINS.get(self._skin, SKINS["dark"])
+        self._c_bg = s["bg"]
+        self._c_bar = s["bar"]
+        self._c_bar_dim = s["bar_dim"]
+        self._c_text = s["text"]
+        self._c_muted = s["muted"]
+        self._c_green = s["green"]
+        self._c_red = s["red"]
+        self._c_grid = s["grid"]
+        self._c_axis = s["axis"]
+
+    def _set_skin(self, skin: str) -> None:
+        if skin in SKINS:
+            self._skin = skin
+            self._apply_skin()
+            self.update()
 
     def _set_currency(self, currency: str) -> None:
         """切换显示货币：价格表切货币，并重置费用累计（旧累计是旧货币）。"""
@@ -401,6 +449,19 @@ class RealtimeWindow(QWidget):
             dact.triggered.connect(lambda checked=False, k=key: self._set_display(k))
             dgroup.addAction(dact)
             menu.addAction(dact)
+        # 皮肤：深色 / 全透明
+        sktitle = QAction("皮肤", menu)
+        sktitle.setEnabled(False)
+        menu.addAction(sktitle)
+        skgroup = QActionGroup(menu)
+        skgroup.setExclusive(True)
+        for key in ("dark", "transparent"):
+            skact = QAction(SKINS[key]["name"], menu)
+            skact.setCheckable(True)
+            skact.setChecked(self._skin == key)
+            skact.triggered.connect(lambda checked=False, k=key: self._set_skin(k))
+            skgroup.addAction(skact)
+            menu.addAction(skact)
         price_act = QAction("价格设置…", menu)
         price_act.triggered.connect(self._open_price_dialog)
         menu.addAction(price_act)
@@ -506,13 +567,13 @@ class RealtimeWindow(QWidget):
 
         # 纵轴刻度：整数友好挡位（0 / 1/4 / 1/2 / 满）
         ticks = self._nice_ticks(max_val)
-        p.setPen(MUTED)
+        p.setPen(self._c_muted)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
         for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
             y = CHART_BOTTOM - int(chart_h * frac)
             self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
-        p.setPen(QColor(255, 255, 255, 25))
+        p.setPen(self._c_grid)
         for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
             y = CHART_BOTTOM - int(chart_h * frac)
             p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
@@ -521,10 +582,10 @@ class RealtimeWindow(QWidget):
             val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
             x = CHART_LEFT + offset * step
             h = max(2.0, chart_h * val / ticks[-1])
-            p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
+            p.setBrush(self._c_bar_dim if offset > 40 else self._c_bar)
             p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
-        p.setPen(QColor(255, 255, 255, 30))
+        p.setPen(self._c_axis)
         p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
         # 横轴时间刻度
         self._paint_x_axis(p, now_sec, chart_w, CHART_BOTTOM + 4)
@@ -545,7 +606,7 @@ class RealtimeWindow(QWidget):
             y_top = CHART_TOP + i * row_h
             y_bot = y_top + row_h
             # 渠道名独占顶部一行（不跟纵轴数字同带）
-            p.setPen(MUTED)
+            p.setPen(self._c_muted)
             p.setFont(QFont("Segoe UI", 8))
             p.drawText(4, y_top, 60, 14, Qt.AlignmentFlag.AlignLeft, label_map.get(name, name.upper()))
             # 柱状图区（渠道名行之下，留足间距避免纵轴与渠道名重叠）
@@ -573,7 +634,7 @@ class RealtimeWindow(QWidget):
             for frac, val in zip((0.0, 0.5, 1.0), ticks_3):  # frac 升序对应值升序
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
-            p.setPen(QColor(255, 255, 255, 25))
+            p.setPen(self._c_grid)
             for frac in (0.0, 0.5, 1.0):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
@@ -582,17 +643,17 @@ class RealtimeWindow(QWidget):
                 val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
                 h = max(2.0, row_h_chart * val / nice_max)
-                p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
+                p.setBrush(self._c_bar_dim if offset > 40 else self._c_bar)
                 p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
-            p.setPen(QColor(255, 255, 255, 25))
+            p.setPen(self._c_grid)
             p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
 
         # 底部预留区画横轴刻度（避免被遮挡）
         self._paint_x_axis(p, now_sec, chart_w, int(self.height() - self.SPLIT_AXIS_H + 4))
 
     def _paint_x_axis(self, p: QPainter, now_sec: int, chart_w: float, y: int) -> None:
-        p.setPen(MUTED)
+        p.setPen(self._c_muted)
         fx = QFont("Segoe UI", 7)
         p.setFont(fx)
         if self._mode == "min":
@@ -614,14 +675,14 @@ class RealtimeWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(BG_COLOR)
+        p.setBrush(self._c_bg)
         p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 16, 16)
 
         # 标题行：状态点 + 名称（显示当前渠道组合）
         online = self._online()
-        p.setBrush(GREEN if online else RED)
+        p.setBrush(self._c_green if online else self._c_red)
         p.drawEllipse(22, 12, 8, 8)
-        p.setPen(MUTED)
+        p.setPen(self._c_muted)
         f = QFont("Segoe UI", 9)
         p.setFont(f)
         mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
@@ -632,13 +693,13 @@ class RealtimeWindow(QWidget):
         f3 = QFont("Segoe UI", 8)
         f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
         p.setFont(f2)
-        p.setPen(TEXT_COLOR)
+        p.setPen(self._c_text)
         fm2 = p.fontMetrics()
         num_text = self._fmt_value(self._daily_total())
         num_w = fm2.horizontalAdvance(num_text)
         p.drawText((WIDTH - 4) - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
         p.setFont(f3)
-        p.setPen(MUTED)
+        p.setPen(self._c_muted)
         fm3 = p.fontMetrics()
         p.drawText((WIDTH - 4) - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
         self._draw_text_right(p, WIDTH - 4, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
