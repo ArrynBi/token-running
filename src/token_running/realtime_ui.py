@@ -563,14 +563,16 @@ class RealtimeWindow(QWidget):
                 buckets = cost_buckets
             max_val = max(buckets.values(), default=0) or 1
             # 纵轴：整数友好挡位（0 / 1/4 / 1/2 / 满），画在柱状图区左侧（渠道名带之下），配四条横线
+            # 分渠道多图：纵轴只用 3 挡（0 / 1/2 / 满）
             ticks = self._nice_ticks(max_val)
+            ticks_3 = [ticks[0], ticks[2], ticks[4]]  # 0, 1/2, 满
             nice_max = ticks[-1]
             p.setFont(QFont("Segoe UI", 7))
-            for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
+            for frac, val in zip((0.0, 0.5, 1.0), ticks_3):  # frac 升序对应值升序
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
             p.setPen(QColor(255, 255, 255, 25))
-            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+            for frac in (0.0, 0.5, 1.0):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
