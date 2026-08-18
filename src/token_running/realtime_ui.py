@@ -113,6 +113,10 @@ class RealtimeWindow(QWidget):
         self._cost_total = 0.0   # 全时段累计费用（USD）
         self._skin = "dark"     # 皮肤："dark" 深色 | "transparent" 全透明
         self._apply_skin()
+        self._span: str = "full"   # 窗口跨度："full" 60s | "half" 30s | "third" 20s
+        self._bar_window = BAR_WINDOW  # 实际柱槽数（随跨度变化）
+        self._hidden: set[str] = set()  # 隐藏元素：title/summary/time/yaxis/grid
+        self._refresh_geometry()
 
         self.setWindowTitle("Token Running")
         self.setWindowFlags(
@@ -122,7 +126,7 @@ class RealtimeWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setFixedSize(WIDTH, HEIGHT)
+        self._refresh_geometry()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -148,9 +152,9 @@ class RealtimeWindow(QWidget):
 
     def _tick(self) -> None:
         now = int(time.time())
-        sec_cutoff = now - BAR_WINDOW
-        cutoff_5s = (now // 5 * 5) - BAR_WINDOW * 5
-        min_cutoff = (now // 60 * 60) - BAR_WINDOW * 60
+        sec_cutoff = now - self._bar_window
+        cutoff_5s = (now // 5 * 5) - self._bar_window * 5
+        min_cutoff = (now // 60 * 60) - self._bar_window * 60
         for name, src in self._channels.items():
             for ev in src.poll():
                 cost = self._prices.cost(ev.model, ev.input_t, ev.output_t, ev.cache_read_t, ev.ts)
@@ -398,14 +402,35 @@ class RealtimeWindow(QWidget):
         self.update()
 
     SPLIT_AXIS_H = 20           # 分渠道模式底部给横轴时间刻度预留的高度
+    SPAN_FACTOR = {"full": 1.0, "half": 0.5, "third": 1.0 / 3}
+    SPAN_BARS = {"full": BAR_WINDOW, "half": 30, "third": 20}
+
+    def _refresh_geometry(self) -> None:
+        """按窗口跨度更新实际柱槽数与窗口宽度（完整 430 / ½ 215 / ⅓ 143）。"""
+        self._bar_window = self.SPAN_BARS.get(self._span, BAR_WINDOW)
+        self._win_w = int(WIDTH * self.SPAN_FACTOR.get(self._span, 1.0))
+        self._refresh_height()
+
+    def _set_span(self, span: str) -> None:
+        if span in self.SPAN_FACTOR:
+            self._span = span
+            self._refresh_geometry()
+            self.update()
+
+    def _toggle_hidden(self, key: str, hidden: bool) -> None:
+        if hidden:
+            self._hidden.add(key)
+        else:
+            self._hidden.discard(key)
+        self.update()
 
     def _refresh_height(self) -> None:
         """合并模式固定高度；分渠道模式按启用渠道数增高（每渠道一行 + 底部横轴区）。"""
         if self._view_mode == "split":
             n = sum(1 for c in self._bar_order if c in self._enabled) or 1
-            self.setFixedSize(WIDTH, CHART_TOP + n * SPLIT_ROW_H + self.SPLIT_AXIS_H)
+            self.setFixedSize(self._win_w, CHART_TOP + n * SPLIT_ROW_H + self.SPLIT_AXIS_H)
         else:
-            self.setFixedSize(WIDTH, HEIGHT)
+            self.setFixedSize(self._win_w, HEIGHT)
 
     # ---- 渠道聚合辅助 ----
 
@@ -448,101 +473,72 @@ class RealtimeWindow(QWidget):
     def _build_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-        for key, label in (("sec", "秒级（60s 窗口）"), ("5s", "5 秒级（300s 窗口）"), ("min", "分钟级（60min 窗口）")):
-            act = QAction(label, menu)
-            act.setCheckable(True)
-            act.setChecked(self._mode == key)
-            act.triggered.connect(lambda checked=False, k=key: self._set_mode(k))
-            group.addAction(act)
-            menu.addAction(act)
-        menu.addSeparator()
-        # 显示方式：合并单图 / 分渠道多图
-        vtitle = QAction("显示方式", menu)
-        vtitle.setEnabled(False)
-        menu.addAction(vtitle)
-        vgroup = QActionGroup(menu)
-        vgroup.setExclusive(True)
-        for key, label in (("combined", "合并显示"), ("split", "分渠道多图（上下）")):
-            vact = QAction(label, menu)
-            vact.setCheckable(True)
-            vact.setChecked(self._view_mode == key)
-            vact.triggered.connect(lambda checked=False, k=key: self._set_view_mode(k))
-            vgroup.addAction(vact)
-            menu.addAction(vact)
-        menu.addSeparator()
-        # 统计口径：今日 / 总量
-        ctitle = QAction("统计口径", menu)
-        ctitle.setEnabled(False)
-        menu.addAction(ctitle)
-        tgroup = QActionGroup(menu)
-        tgroup.setExclusive(True)
-        for key, label in (("day", "今日 · 自然日（0点起）"), ("24h", "今日 · 近24小时")):
-            tact = QAction(label, menu)
-            tact.setCheckable(True)
-            tact.setChecked(self._today_caliber == key)
-            tact.triggered.connect(lambda checked=False, k=key: self._set_caliber("today", k))
-            tgroup.addAction(tact)
-            menu.addAction(tact)
-        ogroup = QActionGroup(menu)
-        ogroup.setExclusive(True)
-        for key, label in (("all", "总量 · 全时段"), ("7d", "总量 · 近7天"), ("30d", "总量 · 近30天"), ("90d", "总量 · 近90天")):
-            oact = QAction(label, menu)
-            oact.setCheckable(True)
-            oact.setChecked(self._total_caliber == key)
-            oact.triggered.connect(lambda checked=False, k=key: self._set_caliber("total", k))
-            ogroup.addAction(oact)
-            menu.addAction(oact)
-        menu.addSeparator()
-        # 显示内容：tokens / 费用
-        dtitle = QAction("显示内容", menu)
-        dtitle.setEnabled(False)
-        menu.addAction(dtitle)
-        dgroup = QActionGroup(menu)
-        dgroup.setExclusive(True)
-        for key, label in (("tokens", "显示 Tokens"), ("cost", "显示费用（USD）")):
-            dact = QAction(label, menu)
-            dact.setCheckable(True)
-            dact.setChecked(self._display == key)
-            dact.triggered.connect(lambda checked=False, k=key: self._set_display(k))
-            dgroup.addAction(dact)
-            menu.addAction(dact)
-        # 皮肤：深色 / 全透明
-        sktitle = QAction("皮肤", menu)
-        sktitle.setEnabled(False)
-        menu.addAction(sktitle)
-        skgroup = QActionGroup(menu)
-        skgroup.setExclusive(True)
+
+        # 视图粒度
+        m_mode = menu.addMenu("视图粒度")
+        g_mode = QActionGroup(m_mode); g_mode.setExclusive(True)
+        for key, label in (("sec", "秒级（60s）"), ("5s", "5 秒级（300s）"), ("min", "分钟级（60min）")):
+            a = QAction(label, m_mode); a.setCheckable(True); a.setChecked(self._mode == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_mode(k)); g_mode.addAction(a); m_mode.addAction(a)
+
+        # 窗口跨度
+        m_span = menu.addMenu("窗口跨度")
+        g_span = QActionGroup(m_span); g_span.setExclusive(True)
+        for key, label in (("full", "完整（60s）"), ("half", "½版（30s）"), ("third", "⅓版（20s）")):
+            a = QAction(label, m_span); a.setCheckable(True); a.setChecked(self._span == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_span(k)); g_span.addAction(a); m_span.addAction(a)
+
+        # 显示方式
+        m_view = menu.addMenu("显示方式")
+        g_view = QActionGroup(m_view); g_view.setExclusive(True)
+        for key, label in (("combined", "合并显示"), ("split", "分渠道多图")):
+            a = QAction(label, m_view); a.setCheckable(True); a.setChecked(self._view_mode == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_view_mode(k)); g_view.addAction(a); m_view.addAction(a)
+
+        # 显示内容
+        m_disp = menu.addMenu("显示内容")
+        g_disp = QActionGroup(m_disp); g_disp.setExclusive(True)
+        for key, label in (("tokens", "Tokens"), ("cost", "费用（USD）")):
+            a = QAction(label, m_disp); a.setCheckable(True); a.setChecked(self._display == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_display(k)); g_disp.addAction(a); m_disp.addAction(a)
+
+        # 皮肤
+        m_skin = menu.addMenu("皮肤")
+        g_skin = QActionGroup(m_skin); g_skin.setExclusive(True)
         for key in ("dark", "transparent", "transparent_dark"):
-            skact = QAction(SKINS[key]["name"], menu)
-            skact.setCheckable(True)
-            skact.setChecked(self._skin == key)
-            skact.triggered.connect(lambda checked=False, k=key: self._set_skin(k))
-            skgroup.addAction(skact)
-            menu.addAction(skact)
-        price_act = QAction("价格设置…", menu)
-        price_act.triggered.connect(self._open_price_dialog)
-        menu.addAction(price_act)
-        menu.addSeparator()
-        # 渠道多选：只显示选中的来源（DSH / Claude Code / Codex）
-        title_act = QAction("显示渠道", menu)
-        title_act.setEnabled(False)
-        menu.addAction(title_act)
-        for ch, label in (
-            ("dsh", "DSH（DeepSeek）"),
-            ("claude", "Claude Code"),
-            ("codex", "Codex"),
-            ("opencode", "Opencode"),
-        ):
+            a = QAction(SKINS[key]["name"], m_skin); a.setCheckable(True); a.setChecked(self._skin == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_skin(k)); g_skin.addAction(a); m_skin.addAction(a)
+
+        # 显示元素（多选隐藏开关）
+        m_elem = menu.addMenu("显示元素")
+        for key, label in (("title", "标题"), ("summary", "汇总数字"), ("time", "时间标"), ("yaxis", "纵轴数字"), ("grid", "横线")):
+            a = QAction(label, m_elem); a.setCheckable(True); a.setChecked(key not in self._hidden)
+            a.toggled.connect(lambda checked, k=key: self._toggle_hidden(k, not checked)); m_elem.addAction(a)
+
+        # 统计口径（今日 / 总量 子菜单）
+        m_cal = menu.addMenu("统计口径")
+        m_today = m_cal.addMenu("今日")
+        g_today = QActionGroup(m_today); g_today.setExclusive(True)
+        for key, label in (("day", "自然日（0点起）"), ("24h", "近24小时")):
+            a = QAction(label, m_today); a.setCheckable(True); a.setChecked(self._today_caliber == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_caliber("today", k)); g_today.addAction(a); m_today.addAction(a)
+        m_total = m_cal.addMenu("总量")
+        g_total = QActionGroup(m_total); g_total.setExclusive(True)
+        for key, label in (("all", "全时段"), ("7d", "近7天"), ("30d", "近30天"), ("90d", "近90天")):
+            a = QAction(label, m_total); a.setCheckable(True); a.setChecked(self._total_caliber == key)
+            a.triggered.connect(lambda c=False, k=key: self._set_caliber("total", k)); g_total.addAction(a); m_total.addAction(a)
+
+        # 显示渠道（多选）
+        m_ch = menu.addMenu("显示渠道")
+        for ch, label in (("dsh", "DSH（DeepSeek）"), ("claude", "Claude Code"), ("codex", "Codex"), ("opencode", "Opencode")):
             if ch not in self._channels:
                 continue
-            act = QAction(label, menu)
-            act.setCheckable(True)
-            act.setChecked(self._is_channel_enabled(ch))
-            act.toggled.connect(lambda checked, c=ch: self._set_channel(c, checked))
-            menu.addAction(act)
+            a = QAction(label, m_ch); a.setCheckable(True); a.setChecked(self._is_channel_enabled(ch))
+            a.toggled.connect(lambda checked, c=ch: self._set_channel(c, checked)); m_ch.addAction(a)
+
         menu.addSeparator()
+        price_act = menu.addAction("价格设置…")
+        price_act.triggered.connect(self._open_price_dialog)
         quit_act = menu.addAction("退出")
         quit_act.triggered.connect(self.close)
         return menu
@@ -613,7 +609,7 @@ class RealtimeWindow(QWidget):
         now_sec = int(time.time())
         chart_w = CHART_RIGHT - CHART_LEFT
         chart_h = CHART_BOTTOM - CHART_TOP
-        step = chart_w / BAR_WINDOW
+        step = chart_w / self._bar_window
         bar_w = max(1.0, step * 0.6)
         if self._mode == "min":
             buckets = self._merged(self._bars_min, self._cost_min)
@@ -626,18 +622,20 @@ class RealtimeWindow(QWidget):
 
         # 纵轴刻度：整数友好挡位（0 / 1/4 / 1/2 / 满）
         ticks = self._nice_ticks(max_val)
-        p.setPen(self._c_muted)
-        fy = QFont("Segoe UI", 7)
-        p.setFont(fy)
-        for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
-            y = CHART_BOTTOM - int(chart_h * frac)
-            self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
-        p.setPen(self._c_grid)
-        for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
-            y = CHART_BOTTOM - int(chart_h * frac)
-            p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+        if "yaxis" not in self._hidden:
+            p.setPen(self._c_muted)
+            fy = QFont("Segoe UI", 7)
+            p.setFont(fy)
+            for frac, val in zip((0.0, 0.25, 0.5, 0.75, 1.0), ticks):  # frac 升序对应 ticks 升序
+                y = CHART_BOTTOM - int(chart_h * frac)
+                self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
+        if "grid" not in self._hidden:
+            p.setPen(self._c_grid)
+            for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+                y = CHART_BOTTOM - int(chart_h * frac)
+                p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
 
-        for offset in range(BAR_WINDOW):
+        for offset in range(self._bar_window):
             val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
             x = CHART_LEFT + offset * step
             h = max(2.0, chart_h * val / ticks[-1])
@@ -647,13 +645,14 @@ class RealtimeWindow(QWidget):
         p.setPen(self._c_axis)
         p.drawLine(CHART_LEFT, CHART_BOTTOM + 2, CHART_RIGHT, CHART_BOTTOM + 2)
         # 横轴时间刻度
-        self._paint_x_axis(p, now_sec, chart_w, CHART_BOTTOM + 4)
+        if "time" not in self._hidden:
+            self._paint_x_axis(p, now_sec, chart_w, CHART_BOTTOM + 4)
 
     def _paint_split_charts(self, p: QPainter) -> None:
         """分渠道多图：每个启用渠道一个上下排列的柱状图。"""
         now_sec = int(time.time())
         chart_w = CHART_RIGHT - CHART_LEFT
-        step = chart_w / BAR_WINDOW
+        step = chart_w / self._bar_window
         bar_w = max(1.0, step * 0.6)
         enabled = [n for n in self._bar_order if n in self._enabled]
         n = len(enabled) or 1
@@ -689,16 +688,18 @@ class RealtimeWindow(QWidget):
             ticks = self._nice_ticks(max_val)
             ticks_3 = [ticks[0], ticks[2], ticks[4]]  # 0, 1/2, 满
             nice_max = ticks[-1]
-            p.setFont(QFont("Segoe UI", 7))
-            for frac, val in zip((0.0, 0.5, 1.0), ticks_3):  # frac 升序对应值升序
-                y = chart_bot - int(row_h_chart * frac)
-                self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
-            p.setPen(self._c_grid)
-            for frac in (0.0, 0.5, 1.0):
-                y = chart_bot - int(row_h_chart * frac)
-                p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
+            if "yaxis" not in self._hidden:
+                p.setFont(QFont("Segoe UI", 7))
+                for frac, val in zip((0.0, 0.5, 1.0), ticks_3):  # frac 升序对应值升序
+                    y = chart_bot - int(row_h_chart * frac)
+                    self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
+            if "grid" not in self._hidden:
+                p.setPen(self._c_grid)
+                for frac in (0.0, 0.5, 1.0):
+                    y = chart_bot - int(row_h_chart * frac)
+                    p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
-            for offset in range(BAR_WINDOW):
+            for offset in range(self._bar_window):
                 val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
                 h = max(2.0, row_h_chart * val / nice_max)
@@ -709,21 +710,25 @@ class RealtimeWindow(QWidget):
             p.drawLine(CHART_LEFT, int(y_bot), CHART_RIGHT, int(y_bot))
 
         # 底部预留区画横轴刻度（避免被遮挡）
-        self._paint_x_axis(p, now_sec, chart_w, int(self.height() - self.SPLIT_AXIS_H + 4))
+        if "time" not in self._hidden:
+            self._paint_x_axis(p, now_sec, chart_w, int(self.height() - self.SPLIT_AXIS_H + 4))
 
     def _paint_x_axis(self, p: QPainter, now_sec: int, chart_w: float, y: int) -> None:
         p.setPen(self._c_muted)
         fx = QFont("Segoe UI", 7)
         p.setFont(fx)
+        # 窗口跨度决定刻度值（full=60s 5档，half=30s，third=20s）
         if self._mode == "min":
-            window_val, x_unit = 60, "min"
-            x_ticks = [0, 15, 30, 45, 60]
+            window_val = self._bar_window  # 分钟模式窗口数
+            x_unit = "min"
         elif self._mode == "5s":
-            window_val, x_unit = 300, "s"
-            x_ticks = [0, 75, 150, 225, 300]
+            window_val = self._bar_window * 5
+            x_unit = "s"
         else:
-            window_val, x_unit = 60, "s"
-            x_ticks = [0, 15, 30, 45, 60]
+            window_val = self._bar_window
+            x_unit = "s"
+        step_val = window_val / 4
+        x_ticks = [int(step_val * i) for i in range(5)]
         x_label_w = 30
         for age in x_ticks:
             x = CHART_LEFT + (age / window_val) * chart_w
@@ -737,31 +742,33 @@ class RealtimeWindow(QWidget):
         p.setBrush(self._c_bg)
         p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 16, 16)
 
-        # 标题行：状态点 + 名称（显示当前渠道组合）
+        # 标题行：状态点 + 名称
         online = self._online()
-        p.setBrush(self._c_green if online else self._c_red)
-        p.drawEllipse(22, 12, 8, 8)
-        p.setPen(self._c_muted)
-        f = QFont("Segoe UI", 9)
-        p.setFont(f)
-        mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
-        unit_tag = "COST" if self._display == "cost" else "TOKENS"
-        p.drawText(38, 20, f"TOKEN RUNNING · {unit_tag} · " + ("实时" if online else "离线") + f" · {mode_text}")
+        if "title" not in self._hidden:
+            p.setBrush(self._c_green if online else self._c_red)
+            p.drawEllipse(22, 12, 8, 8)
+            p.setPen(self._c_muted)
+            f = QFont("Segoe UI", 9)
+            p.setFont(f)
+            mode_text = {"sec": "秒级", "5s": "5秒级", "min": "分钟级"}.get(self._mode, "秒级")
+            unit_tag = "COST" if self._display == "cost" else "TOKENS"
+            p.drawText(38, 20, f"TOKEN RUNNING · {unit_tag} · " + ("实时" if online else "离线") + f" · {mode_text}")
 
-        # 右上角：今日（8pt 小字）与数字（17pt 大字）同排，右缘对齐；下方总量紧跟无空行
-        f3 = QFont("Segoe UI", 8)
-        f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
-        p.setFont(f2)
-        p.setPen(self._c_text)
-        fm2 = p.fontMetrics()
-        num_text = self._fmt_value(self._daily_total())
-        num_w = fm2.horizontalAdvance(num_text)
-        p.drawText((WIDTH - 4) - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
-        p.setFont(f3)
-        p.setPen(self._c_muted)
-        fm3 = p.fontMetrics()
-        p.drawText((WIDTH - 4) - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
-        self._draw_text_right(p, WIDTH - 4, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
+        # 右上角：今日与总量（隐藏汇总时跳过）
+        if "summary" not in self._hidden:
+            f3 = QFont("Segoe UI", 8)
+            f2 = QFont("Segoe UI", 17, QFont.Weight.DemiBold)
+            p.setFont(f2)
+            p.setPen(self._c_text)
+            fm2 = p.fontMetrics()
+            num_text = self._fmt_value(self._daily_total())
+            num_w = fm2.horizontalAdvance(num_text)
+            p.drawText((self._win_w - 4) - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
+            p.setFont(f3)
+            p.setPen(self._c_muted)
+            fm3 = p.fontMetrics()
+            p.drawText((self._win_w - 4) - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
+            self._draw_text_right(p, self._win_w - 4, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
 
         # 柱状图主体：按显示方式（合并 / 分渠道多图）
         if self._view_mode == "split":
