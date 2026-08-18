@@ -40,16 +40,30 @@ SKINS: dict[str, dict] = {
         "axis": QColor(255, 255, 255, 30),
     },
     "transparent": {
-        "name": "全透明",
+        "name": "全透明（自动）",
         "bg": QColor(0, 0, 0, 0),          # 完全透明背景
         "bar": QColor(94, 200, 130, 230),
         "bar_dim": QColor(94, 200, 130, 90),
-        "text": QColor(255, 255, 255, 255),
+        "text": QColor(255, 255, 255, 255),   # 自动：亮背景切黑字，暗背景白字
         "muted": QColor(255, 255, 255, 180),
         "green": QColor(94, 200, 130),
         "red": QColor(230, 90, 90),
         "grid": QColor(255, 255, 255, 60),
         "axis": QColor(255, 255, 255, 80),
+        "auto_text": True,                     # 根据背景亮度自动黑/白
+    },
+    "transparent_dark": {
+        "name": "全透明（黑）",
+        "bg": QColor(0, 0, 0, 0),
+        "bar": QColor(30, 160, 90, 230),
+        "bar_dim": QColor(30, 160, 90, 90),
+        "text": QColor(20, 20, 20, 255),      # 黑字
+        "muted": QColor(60, 60, 60, 200),
+        "green": QColor(30, 150, 80),
+        "red": QColor(200, 60, 60),
+        "grid": QColor(0, 0, 0, 70),
+        "axis": QColor(0, 0, 0, 90),
+        "auto_text": False,
     },
 }
 
@@ -196,6 +210,9 @@ class RealtimeWindow(QWidget):
             event.accept()
             return
         self._drag_offset = None
+        # 拖动结束后重新采样背景（透明自动皮肤随位置自适应）
+        self._apply_skin()
+        self.update()
         event.accept()
 
     # ---- 模式与菜单 ----
@@ -227,6 +244,32 @@ class RealtimeWindow(QWidget):
         self._display = display
         self.update()
 
+    def _background_brightness(self) -> float | None:
+        """采样窗口所在屏幕背景的平均亮度（0-1）；失败返回 None。"""
+        try:
+            from PySide6.QtGui import QGuiApplication
+            screen = QGuiApplication.screenAt(self.pos() + self.rect().center())
+            if screen is None:
+                screen = QGuiApplication.primaryScreen()
+            if screen is None:
+                return None
+            # 抓取窗口中心区域背景（透明窗口下方内容）
+            center = self.pos() + self.rect().center()
+            pix = screen.grabWindow(0, center.x() - 10, center.y() - 10, 20, 20)
+            if pix.isNull():
+                return None
+            img = pix.toImage()
+            total = 0
+            n = 0
+            for x in range(img.width()):
+                for y in range(img.height()):
+                    c = img.pixelColor(x, y)
+                    total += 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+                    n += 1
+            return total / n / 255.0 if n else None
+        except Exception:
+            return None
+
     def _apply_skin(self) -> None:
         s = SKINS.get(self._skin, SKINS["dark"])
         self._c_bg = s["bg"]
@@ -238,6 +281,22 @@ class RealtimeWindow(QWidget):
         self._c_red = s["red"]
         self._c_grid = s["grid"]
         self._c_axis = s["axis"]
+        # 透明自动皮肤：按背景亮度切换黑/白字（亮背景黑字，暗背景白字）
+        if s.get("auto_text"):
+            bright = self._background_brightness()
+            if bright is not None:
+                if bright > 0.5:
+                    self._c_text = QColor(20, 20, 20, 255)
+                    self._c_muted = QColor(60, 60, 60, 200)
+                    self._c_grid = QColor(0, 0, 0, 70)
+                    self._c_axis = QColor(0, 0, 0, 90)
+                    self._c_bar = QColor(30, 160, 90, 230)
+                else:
+                    self._c_text = QColor(255, 255, 255, 255)
+                    self._c_muted = QColor(255, 255, 255, 180)
+                    self._c_grid = QColor(255, 255, 255, 60)
+                    self._c_axis = QColor(255, 255, 255, 80)
+                    self._c_bar = QColor(94, 200, 130, 230)
 
     def _set_skin(self, skin: str) -> None:
         if skin in SKINS:
@@ -455,7 +514,7 @@ class RealtimeWindow(QWidget):
         menu.addAction(sktitle)
         skgroup = QActionGroup(menu)
         skgroup.setExclusive(True)
-        for key in ("dark", "transparent"):
+        for key in ("dark", "transparent", "transparent_dark"):
             skact = QAction(SKINS[key]["name"], menu)
             skact.setCheckable(True)
             skact.setChecked(self._skin == key)
