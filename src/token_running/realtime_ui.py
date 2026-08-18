@@ -478,18 +478,24 @@ class RealtimeWindow(QWidget):
         return "+".join(parts) if parts else "OFF"
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        """拦截菜单关闭事件：点击二级菜单选项后保持菜单打开（方便连续调整）。"""
-        from PySide6.QtCore import QEvent
-        if isinstance(obj, QMenu) and event.type() == QEvent.Type.Close:
-            # 阻止菜单关闭（除主菜单显式选择退出/价格设置时外）
-            return True
+        """拦截子菜单鼠标释放：手动触发选项并阻止菜单关闭（方便连续调整）。"""
+        from PySide6.QtCore import QEvent, Qt
+        if isinstance(obj, QMenu) and event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                act = obj.actionAt(event.position().toPoint())
+                if act is not None and act.isEnabled() and act.text():
+                    if act.isCheckable():
+                        act.toggle()
+                    else:
+                        act.trigger()
+                    return True  # 消费事件，阻止菜单关闭
         return super().eventFilter(obj, event)
 
     def _keep_open(self, menu: QMenu) -> None:
-        """给菜单装事件过滤器，使其点击选项后不自动关闭。"""
-        menu.installEventFilter(self)
+        """给所有二级子菜单装事件过滤器：点击选项保持打开；主菜单不装（Esc/外部可关）。"""
         for act in menu.actions():
             if act.menu() is not None:
+                act.menu().installEventFilter(self)
                 self._keep_open(act.menu())
 
     def _build_menu(self) -> QMenu:
@@ -563,10 +569,8 @@ class RealtimeWindow(QWidget):
         price_act.triggered.connect(self._open_price_dialog)
         quit_act = menu.addAction("退出")
         quit_act.triggered.connect(self.close)
-        # 除主菜单外，所有子菜单点击选项后保持打开
+        # 所有二级子菜单点击选项后保持打开（主菜单不拦截，可 Esc/点外部关闭）
         self._keep_open(menu)
-        # 主菜单本身的关闭仍允许（点击空白或 Esc）
-        menu.removeEventFilter(self)
         return menu
 
     def _show_menu(self, pos: QPoint) -> None:
