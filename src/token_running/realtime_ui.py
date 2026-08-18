@@ -456,9 +456,11 @@ class RealtimeWindow(QWidget):
         return {"min": "tok/min", "5s": "tok/5s"}.get(mode, "tok")
 
     def _fmt_value(self, val: float) -> str:
-        """按显示模式格式化数值：tokens 用 K/M，cost 用当前货币。"""
+        """按显示模式格式化数值：tokens 用 K/M（<1 保留小数），cost 用当前货币。"""
         if self._display == "cost":
             return _format_cost(val, self._prices.symbol())
+        if val < 1:
+            return f"{val:.1f}" if val > 0 else "0"
         return _format_compact(int(val))
 
     def _nice_ticks(self, max_val: float) -> list[float]:
@@ -498,11 +500,11 @@ class RealtimeWindow(QWidget):
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        for frac, val in zip((1.0, 0.75, 0.5, 0.0), ticks):
+        for frac, val in zip((0.0, 0.25, 0.5, 1.0), ticks):  # frac 升序对应 ticks 升序
             y = CHART_BOTTOM - int(chart_h * frac)
             self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
         p.setPen(QColor(255, 255, 255, 25))
-        for frac in (1.0, 0.75, 0.5, 0.0):
+        for frac in (0.0, 0.25, 0.5, 1.0):
             y = CHART_BOTTOM - int(chart_h * frac)
             p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
 
@@ -557,11 +559,11 @@ class RealtimeWindow(QWidget):
             ticks = self._nice_ticks(max_val)
             nice_max = ticks[-1]
             p.setFont(QFont("Segoe UI", 7))
-            for frac, val in zip((1.0, 0.75, 0.5, 0.0), ticks):
+            for frac, val in zip((0.0, 0.25, 0.5, 1.0), ticks):  # frac 升序对应 ticks 升序
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
             p.setPen(QColor(255, 255, 255, 25))
-            for frac in (1.0, 0.75, 0.5, 0.0):
+            for frac in (0.0, 0.25, 0.5, 1.0):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
             # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
