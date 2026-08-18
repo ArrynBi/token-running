@@ -12,10 +12,10 @@ from token_running.jsonl_source import JsonlSource
 from token_running.pricing import PriceTable
 from token_running.source import TokenSource
 
-WIDTH, HEIGHT = 440, 170   # 底部多留空间给横轴时间刻度，避免被遮挡
+WIDTH, HEIGHT = 410, 170   # 收窄左侧空白；底部留空间给横轴时间刻度
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
-CHART_LEFT, CHART_TOP = 42, 52    # 左侧留 26px 给纵轴刻度，顶部留标题区（含总量行）
-CHART_RIGHT, CHART_BOTTOM = 424, 146  # 图表区向下扩展，占用更多空间
+CHART_LEFT, CHART_TOP = 30, 52    # 左侧仅留 14px 给纵轴刻度（刻度数字贴边即可）
+CHART_RIGHT, CHART_BOTTOM = 396, 146  # 图表区向下扩展，占用更多空间
 SPLIT_ROW_H = 80             # 分渠道多图：每渠道一行的高度（含顶部渠道名行与纵轴区）
 BG_COLOR = QColor(13, 17, 28, 252)  # 接近不透明（alpha 252），减少桌面透光导致的时暗时亮
 BAR_COLOR = QColor(94, 200, 130, 210)
@@ -84,6 +84,21 @@ class RealtimeWindow(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
         self._tick()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        """窗口显示后移除 DWM 阴影与圆角（避免四周白边）。"""
+        super().showEvent(event)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            hwnd = int(self.winId())
+            # DWMWA_NCRENDERING_POLICY=2 (DWMNCRP_DISABLED)：禁用非客户区渲染（去阴影）
+            # DWMWA_WINDOW_CORNER_PREFERENCE=33 (DWMWCP_DONOTROUND=1)：禁系统圆角
+            for attr, val in ((2, 2), (33, 1)):
+                v = ctypes.c_int(val)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), attr, ctypes.byref(v), ctypes.sizeof(v))
+        except Exception:
+            pass
 
     # ---- 数据 ----
 
@@ -589,12 +604,12 @@ class RealtimeWindow(QWidget):
         fm2 = p.fontMetrics()
         num_text = self._fmt_value(self._daily_total())
         num_w = fm2.horizontalAdvance(num_text)
-        p.drawText(436 - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
+        p.drawText((WIDTH - 4) - num_w, 26, num_text)  # 数字基线 y=26（下移一行）
         p.setFont(f3)
         p.setPen(MUTED)
         fm3 = p.fontMetrics()
-        p.drawText(436 - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
-        self._draw_text_right(p, 436, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
+        p.drawText((WIDTH - 4) - num_w - 6 - fm3.horizontalAdvance("今日"), 24, "今日")  # 8pt 小字贴数字左侧
+        self._draw_text_right(p, WIDTH - 4, 40, f"总量 {self._fmt_value(self._total())}")  # 紧跟今日行下方
 
         # 柱状图主体：按显示方式（合并 / 分渠道多图）
         if self._view_mode == "split":
