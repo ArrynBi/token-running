@@ -477,66 +477,81 @@ class RealtimeWindow(QWidget):
         parts = [label_map.get(n, n.upper()) for n in self._bar_order if n in self._enabled]
         return "+".join(parts) if parts else "OFF"
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """拦截菜单关闭事件：点击二级菜单选项后保持菜单打开（方便连续调整）。"""
+        from PySide6.QtCore import QEvent
+        if isinstance(obj, QMenu) and event.type() == QEvent.Type.Close:
+            # 阻止菜单关闭（除主菜单显式选择退出/价格设置时外）
+            return True
+        return super().eventFilter(obj, event)
+
+    def _keep_open(self, menu: QMenu) -> None:
+        """给菜单装事件过滤器，使其点击选项后不自动关闭。"""
+        menu.installEventFilter(self)
+        for act in menu.actions():
+            if act.menu() is not None:
+                self._keep_open(act.menu())
+
     def _build_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint)
 
         # 视图粒度
-        m_mode = menu.addMenu("视图粒度")
+        m_mode = QMenu("视图粒度", menu); menu.addMenu(m_mode)
         g_mode = QActionGroup(m_mode); g_mode.setExclusive(True)
         for key, label in (("sec", "秒级（60s）"), ("5s", "5 秒级（300s）"), ("min", "分钟级（60min）")):
             a = QAction(label, m_mode); a.setCheckable(True); a.setChecked(self._mode == key)
             a.triggered.connect(lambda c=False, k=key: self._set_mode(k)); g_mode.addAction(a); m_mode.addAction(a)
 
         # 窗口跨度
-        m_span = menu.addMenu("窗口跨度")
+        m_span = QMenu("窗口跨度", menu); menu.addMenu(m_span)
         g_span = QActionGroup(m_span); g_span.setExclusive(True)
         for key, label in (("full", "完整（60s）"), ("half", "½版（30s）"), ("third", "⅓版（20s）")):
             a = QAction(label, m_span); a.setCheckable(True); a.setChecked(self._span == key)
             a.triggered.connect(lambda c=False, k=key: self._set_span(k)); g_span.addAction(a); m_span.addAction(a)
 
         # 显示方式
-        m_view = menu.addMenu("显示方式")
+        m_view = QMenu("显示方式", menu); menu.addMenu(m_view)
         g_view = QActionGroup(m_view); g_view.setExclusive(True)
         for key, label in (("combined", "合并显示"), ("split", "分渠道多图")):
             a = QAction(label, m_view); a.setCheckable(True); a.setChecked(self._view_mode == key)
             a.triggered.connect(lambda c=False, k=key: self._set_view_mode(k)); g_view.addAction(a); m_view.addAction(a)
 
         # 显示内容
-        m_disp = menu.addMenu("显示内容")
+        m_disp = QMenu("显示内容", menu); menu.addMenu(m_disp)
         g_disp = QActionGroup(m_disp); g_disp.setExclusive(True)
         for key, label in (("tokens", "Tokens"), ("cost", "费用（USD）")):
             a = QAction(label, m_disp); a.setCheckable(True); a.setChecked(self._display == key)
             a.triggered.connect(lambda c=False, k=key: self._set_display(k)); g_disp.addAction(a); m_disp.addAction(a)
 
         # 皮肤
-        m_skin = menu.addMenu("皮肤")
+        m_skin = QMenu("皮肤", menu); menu.addMenu(m_skin)
         g_skin = QActionGroup(m_skin); g_skin.setExclusive(True)
         for key in ("dark", "transparent", "transparent_dark"):
             a = QAction(SKINS[key]["name"], m_skin); a.setCheckable(True); a.setChecked(self._skin == key)
             a.triggered.connect(lambda c=False, k=key: self._set_skin(k)); g_skin.addAction(a); m_skin.addAction(a)
 
         # 显示元素（多选隐藏开关）
-        m_elem = menu.addMenu("显示元素")
+        m_elem = QMenu("显示元素", menu); menu.addMenu(m_elem)
         for key, label in (("title", "标题"), ("summary", "汇总数字"), ("time", "时间标"), ("yaxis", "纵轴数字"), ("grid", "横线")):
             a = QAction(label, m_elem); a.setCheckable(True); a.setChecked(key not in self._hidden)
             a.toggled.connect(lambda checked, k=key: self._toggle_hidden(k, not checked)); m_elem.addAction(a)
 
         # 统计口径（今日 / 总量 子菜单）
-        m_cal = menu.addMenu("统计口径")
-        m_today = m_cal.addMenu("今日")
+        m_cal = QMenu("统计口径", menu); menu.addMenu(m_cal)
+        m_today = QMenu("今日", m_cal); m_cal.addMenu(m_today)
         g_today = QActionGroup(m_today); g_today.setExclusive(True)
         for key, label in (("day", "自然日（0点起）"), ("24h", "近24小时")):
             a = QAction(label, m_today); a.setCheckable(True); a.setChecked(self._today_caliber == key)
             a.triggered.connect(lambda c=False, k=key: self._set_caliber("today", k)); g_today.addAction(a); m_today.addAction(a)
-        m_total = m_cal.addMenu("总量")
+        m_total = QMenu("总量", m_cal); m_cal.addMenu(m_total)
         g_total = QActionGroup(m_total); g_total.setExclusive(True)
         for key, label in (("all", "全时段"), ("7d", "近7天"), ("30d", "近30天"), ("90d", "近90天")):
             a = QAction(label, m_total); a.setCheckable(True); a.setChecked(self._total_caliber == key)
             a.triggered.connect(lambda c=False, k=key: self._set_caliber("total", k)); g_total.addAction(a); m_total.addAction(a)
 
         # 显示渠道（多选）
-        m_ch = menu.addMenu("显示渠道")
+        m_ch = QMenu("显示渠道", menu); menu.addMenu(m_ch)
         for ch, label in (("dsh", "DSH（DeepSeek）"), ("claude", "Claude Code"), ("codex", "Codex"), ("opencode", "Opencode")):
             if ch not in self._channels:
                 continue
@@ -548,6 +563,10 @@ class RealtimeWindow(QWidget):
         price_act.triggered.connect(self._open_price_dialog)
         quit_act = menu.addAction("退出")
         quit_act.triggered.connect(self.close)
+        # 除主菜单外，所有子菜单点击选项后保持打开
+        self._keep_open(menu)
+        # 主菜单本身的关闭仍允许（点击空白或 Esc）
+        menu.removeEventFilter(self)
         return menu
 
     def _show_menu(self, pos: QPoint) -> None:
