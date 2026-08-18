@@ -742,19 +742,20 @@ class RealtimeWindow(QWidget):
         step_val = window_val / (n_ticks - 1)
         x_ticks = [int(step_val * i) for i in range(n_ticks)]
         x_label_w = 30
-        n = len(x_ticks)
+        label_h = 12
+        # 全部用 rect 形式（文字顶部对齐到同一 y），等距分布
         for i, age in enumerate(x_ticks):
             x = CHART_LEFT + (age / window_val) * chart_w
             label = f"{age}{x_unit}"
             if i == 0:
-                # 最左刻度：左对齐贴左边界
-                p.drawText(int(x), y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, label)
-            elif i == n - 1:
-                # 最右刻度：右对齐贴右边界（不再被推到偏左）
-                self._draw_text_right(p, self._chart_right, y, label)
+                # 最左刻度：左对齐贴图表左边界
+                p.drawText(int(x), y, x_label_w, label_h, Qt.AlignmentFlag.AlignLeft, label)
+            elif i == len(x_ticks) - 1:
+                # 最右刻度：右对齐贴图表右边界（rect 形式，与其它刻度同 y 带）
+                p.drawText(int(self._chart_right) - x_label_w, y, x_label_w, label_h, Qt.AlignmentFlag.AlignLeft, label)
             else:
-                # 中间刻度：居中
-                p.drawText(int(x) - x_label_w // 2, y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, label)
+                # 中间刻度：以刻度位置居中
+                p.drawText(int(x) - x_label_w // 2, y, x_label_w, label_h, Qt.AlignmentFlag.AlignLeft, label)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
