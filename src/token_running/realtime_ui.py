@@ -35,14 +35,8 @@ def _format_compact(value: int) -> str:
 
 
 def _format_cost(value: float, symbol: str = "$") -> str:
-    """费用格式化（当前货币符号）。>=1 保留 2 位，否则显示美分/亚美分。"""
-    if value >= 100:
-        return symbol + format(value, ",.0f")
-    if value >= 1:
-        return symbol + format(value, ".2f")
-    if value >= 0.01:
-        return symbol + format(value, ".3f")
-    return symbol + format(value, ".4f")
+    """费用格式化：统一两位小数（当前货币符号）。"""
+    return symbol + format(value, ".2f")
 
 
 class RealtimeWindow(QWidget):
