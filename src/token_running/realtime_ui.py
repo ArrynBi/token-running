@@ -665,7 +665,7 @@ class RealtimeWindow(QWidget):
             val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
             x = CHART_LEFT + offset * step
             h = max(2.0, chart_h * val / ticks[-1])
-            p.setBrush(self._c_bar_dim if offset > 40 else self._c_bar)
+            p.setBrush(self._c_bar)
             p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
         p.setPen(self._c_axis)
@@ -729,7 +729,7 @@ class RealtimeWindow(QWidget):
                 val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
                 h = max(2.0, row_h_chart * val / nice_max)
-                p.setBrush(self._c_bar_dim if offset > 40 else self._c_bar)
+                p.setBrush(self._c_bar)
                 p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
             p.setPen(self._c_grid)
