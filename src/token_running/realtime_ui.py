@@ -34,15 +34,15 @@ def _format_compact(value: int) -> str:
     return str(value)
 
 
-def _format_cost(value: float) -> str:
-    """费用格式化：美元。>=1 保留 2 位，否则显示美分/亚美分。"""
+def _format_cost(value: float, symbol: str = "$") -> str:
+    """费用格式化（当前货币符号）。>=1 保留 2 位，否则显示美分/亚美分。"""
     if value >= 100:
-        return f"${value:,.0f}"
+        return symbol + format(value, ",.0f")
     if value >= 1:
-        return f"${value:.2f}"
+        return symbol + format(value, ".2f")
     if value >= 0.01:
-        return f"${value:.3f}"
-    return f"${value:.4f}"
+        return symbol + format(value, ".3f")
+    return symbol + format(value, ".4f")
 
 
 class RealtimeWindow(QWidget):
@@ -188,34 +188,78 @@ class RealtimeWindow(QWidget):
         self._display = display
         self.update()
 
+    def _set_currency(self, currency: str) -> None:
+        """切换显示货币：价格表切货币，并重置费用累计（旧累计是旧货币）。"""
+        self._prices.set_currency(currency)
+        self._cost_daily = 0.0
+        self._cost_total = 0.0
+        self.update()
+
     def _open_price_dialog(self) -> None:
-        """弹出价格设置对话框：每个模型的输入/输出/缓存命中价格（USD/M）。"""
-        from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel
+        """价格设置：美元/人民币一键切换，各自编辑输入/输出/缓存命中价格。"""
+        from PySide6.QtWidgets import (QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
+                                       QLabel, QComboBox, QHBoxLayout)
         dlg = QDialog(self)
-        dlg.setWindowTitle("价格设置（USD / 1M tokens）")
-        form = QFormLayout(dlg)
-        form.addRow(QLabel("波峰 9:00-12:00、14:00-18:00（北京）；空闲时段半价"))
+        dlg.setWindowTitle("价格设置（/ 1M tokens）")
+        root = QFormLayout(dlg)
+
+        # 货币切换行
+        cur_row = QHBoxLayout()
+        cur_row.addWidget(QLabel("货币："))
+        combo = QComboBox()
+        combo.addItem("USD（美元）", "usd")
+        combo.addItem("CNY（人民币）", "cny")
+        combo.setCurrentIndex(0 if self._prices.currency == "usd" else 1)
+        cur_row.addWidget(combo)
+        cur_row.addWidget(QLabel("  （美元/人民币分别计价）"))
+        root.addRow(cur_row)
+        root.addRow(QLabel("波峰 9:00-12:00、14:00-18:00（北京）；空闲时段半价"))
+
         editors = {}
-        for model, (i, o, cr) in sorted(self._prices.prices.items()):
-            row = [QLineEdit(str(i)), QLineEdit(str(o)), QLineEdit(str(cr))]
-            for w in row:
-                w.setFixedWidth(80)
-            form.addRow(model, row[0])
-            form.addRow("   输出", row[1])
-            form.addRow("   缓存命中", row[2])
-            editors[model] = row
+
+        def rebuild():
+            # 清空旧的模型行，按当前货币重建
+            while root.rowCount() > 2:
+                root.removeRow(root.rowCount() - 1)
+            editors.clear()
+            for model, (i, o, cr) in sorted(self._prices.get_active().items()):
+                row = [QLineEdit(str(i)), QLineEdit(str(o)), QLineEdit(str(cr))]
+                for w in row:
+                    w.setFixedWidth(80)
+                root.addRow(model, row[0])
+                root.addRow("   输出", row[1])
+                root.addRow("   缓存命中", row[2])
+                editors[model] = row
+
+        def on_currency(idx):
+            # 保存当前货币已编辑的值，再切货币重建
+            self._save_price_edits(editors)
+            self._prices.set_currency(combo.itemData(idx))
+            rebuild()
+
+        combo.currentIndexChanged.connect(on_currency)
+        rebuild()
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
-        form.addRow(btns)
+        root.addRow(btns)
         if dlg.exec():
-            for model, row in editors.items():
-                try:
-                    self._prices.set(model, float(row[0].text()), float(row[1].text()), float(row[2].text()))
-                except ValueError:
-                    pass
+            self._save_price_edits(editors)
+            self._prices.set_currency(combo.itemData(combo.currentIndex()))
             self._prices.save_defaults()
+            self._cost_daily = 0.0
+            self._cost_total = 0.0
             self.update()
+
+    def _save_price_edits(self, editors: dict) -> None:
+        """把弹窗中当前货币的编辑值写回价格表。"""
+        for model, row in editors.items():
+            try:
+                self._prices.set(model, float(row[0].text()), float(row[1].text()), float(row[2].text()))
+            except ValueError:
+                pass
 
     def _set_caliber(self, which: str, value: str) -> None:
         if which == "today":
@@ -403,9 +447,9 @@ class RealtimeWindow(QWidget):
         return {"min": "tok/min", "5s": "tok/5s"}.get(mode, "tok")
 
     def _fmt_value(self, val: float) -> str:
-        """按显示模式格式化数值：tokens 用 K/M，cost 用美元。"""
+        """按显示模式格式化数值：tokens 用 K/M，cost 用当前货币。"""
         if self._display == "cost":
-            return _format_cost(val)
+            return _format_cost(val, self._prices.symbol())
         return _format_compact(int(val))
 
     def _paint_combined_chart(self, p: QPainter) -> None:
