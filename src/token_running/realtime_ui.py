@@ -461,6 +461,22 @@ class RealtimeWindow(QWidget):
             return _format_cost(val, self._prices.symbol())
         return _format_compact(int(val))
 
+    def _nice_ticks(self, max_val: float) -> list[float]:
+        """生成整数友好的纵轴挡位（0 / 1/4 / 1/2 / 满），满刻度向上取整到 1/2/5×10^n。"""
+        import math
+        if max_val <= 0:
+            return [0.0, 0.0, 0.0, 0.0]
+        # 确定步长数量级：取 max 的 1/4 向上凑到 1/2/5 系列
+        quarter = max_val / 4
+        mag = 10 ** math.floor(math.log10(quarter)) if quarter > 0 else 1
+        for mult in (1, 2, 5, 10):
+            step = mult * mag
+            if step >= quarter:
+                break
+        # 满刻度 = step * 4（保证 1/4 挡是整数），再归一化
+        nice_max = step * 4
+        return [0.0, nice_max / 4, nice_max / 2, nice_max]
+
     def _paint_combined_chart(self, p: QPainter) -> None:
         """合并单图：所有启用渠道求和后一张柱状图。"""
         now_sec = int(time.time())
@@ -475,24 +491,25 @@ class RealtimeWindow(QWidget):
         else:
             buckets = self._merged(self._bars_sec, self._cost_sec)
         cur = self._mode_cur(self._mode, now_sec)
-        max_tokens = max(buckets.values(), default=0) or 1
+        max_val = max(buckets.values(), default=0) or 1
 
-        # 纵轴刻度
+        # 纵轴刻度：整数友好挡位（0 / 1/4 / 1/2 / 满）
+        ticks = self._nice_ticks(max_val)
         p.setPen(MUTED)
         fy = QFont("Segoe UI", 7)
         p.setFont(fy)
-        for frac, val in [(1.0, max_tokens), (0.5, max_tokens / 2), (0.0, 0)]:
+        for frac, val in zip((1.0, 0.75, 0.5, 0.0), ticks):
             y = CHART_BOTTOM - int(chart_h * frac)
             self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
         p.setPen(QColor(255, 255, 255, 25))
-        for frac in (1.0, 0.5, 0.0):
+        for frac in (1.0, 0.75, 0.5, 0.0):
             y = CHART_BOTTOM - int(chart_h * frac)
             p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
 
         for offset in range(BAR_WINDOW):
             val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
             x = CHART_LEFT + offset * step
-            h = max(2.0, chart_h * val / max_tokens)
+            h = max(2.0, chart_h * val / ticks[-1])
             p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
             p.drawRect(int(x), int(CHART_BOTTOM - h), int(bar_w), int(h))
 
@@ -535,21 +552,23 @@ class RealtimeWindow(QWidget):
                 cost_buckets = self._cost_sec.get(name, {})
             if self._display == "cost":
                 buckets = cost_buckets
-            max_tokens = max(buckets.values(), default=0) or 1
-            # 纵轴：两个刻度（max / max/2），画在柱状图区左侧（渠道名带之下），配两条横线
+            max_val = max(buckets.values(), default=0) or 1
+            # 纵轴：整数友好挡位（0 / 1/4 / 1/2 / 满），画在柱状图区左侧（渠道名带之下），配四条横线
+            ticks = self._nice_ticks(max_val)
+            nice_max = ticks[-1]
             p.setFont(QFont("Segoe UI", 7))
-            for frac, val in [(1.0, max_tokens), (0.5, max_tokens / 2)]:
+            for frac, val in zip((1.0, 0.75, 0.5, 0.0), ticks):
                 y = chart_bot - int(row_h_chart * frac)
                 self._draw_text_right(p, CHART_LEFT - 6, y - 4, self._fmt_value(val))
             p.setPen(QColor(255, 255, 255, 25))
-            for frac in (1.0, 0.5):
+            for frac in (1.0, 0.75, 0.5, 0.0):
                 y = chart_bot - int(row_h_chart * frac)
                 p.drawLine(CHART_LEFT, y, CHART_RIGHT, y)
-            # 柱状图
+            # 柱状图（按 nice_max 归一化，满刻度与最高柱对齐）
             for offset in range(BAR_WINDOW):
                 val = buckets.get(self._slot_of(self._mode, cur, offset), 0)
                 x = CHART_LEFT + offset * step
-                h = max(2.0, row_h_chart * val / max_tokens)
+                h = max(2.0, row_h_chart * val / nice_max)
                 p.setBrush(BAR_DIM if offset > 40 else BAR_COLOR)
                 p.drawRect(int(x), int(chart_bot - h), int(bar_w), int(h))
             # 行底分隔线
