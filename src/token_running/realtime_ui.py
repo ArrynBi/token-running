@@ -416,6 +416,11 @@ class RealtimeWindow(QWidget):
     def _set_span(self, span: str) -> None:
         if span in self.SPAN_FACTOR:
             self._span = span
+            # ½/⅓ 版自动隐藏标题（窗口小）；完整版恢复
+            if span != "full":
+                self._hidden.add("title")
+            else:
+                self._hidden.discard("title")
             self._refresh_geometry()
             self.update()
 
@@ -729,12 +734,19 @@ class RealtimeWindow(QWidget):
         else:
             window_val = self._bar_window
             x_unit = "s"
-        step_val = window_val / 4
-        x_ticks = [int(step_val * i) for i in range(5)]
+        # 刻度数量按图表宽度自适应：宽窗 5 档，窄窗 3 档（0/½/满）
+        if chart_w < 220:
+            n_ticks = 3
+        else:
+            n_ticks = 5
+        step_val = window_val / (n_ticks - 1)
+        x_ticks = [int(step_val * i) for i in range(n_ticks)]
         x_label_w = 30
         for age in x_ticks:
             x = CHART_LEFT + (age / window_val) * chart_w
-            x = max(CHART_LEFT, min(self._chart_right - x_label_w, x))
+            # 刻度按比例定位，不 clamp 偏移（避免最后刻度偏左）
+            if x >= self._chart_right - 4:
+                x = self._chart_right - x_label_w
             p.drawText(int(x), y, x_label_w, 10, Qt.AlignmentFlag.AlignLeft, f"{age}{x_unit}")
 
     def paintEvent(self, _event) -> None:  # noqa: N802
@@ -744,11 +756,12 @@ class RealtimeWindow(QWidget):
         p.setBrush(self._c_bg)
         p.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 16, 16)
 
-        # 标题行：状态点 + 名称
+        # 状态点：无论是否隐藏标题都显示（软件灵魂）
         online = self._online()
+        p.setBrush(self._c_green if online else self._c_red)
+        p.drawEllipse(22, 12, 8, 8)
+        # 标题行（隐藏标题时跳过，状态点保留）
         if "title" not in self._hidden:
-            p.setBrush(self._c_green if online else self._c_red)
-            p.drawEllipse(22, 12, 8, 8)
             p.setPen(self._c_muted)
             f = QFont("Segoe UI", 9)
             p.setFont(f)
