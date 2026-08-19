@@ -12,6 +12,7 @@ from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
 from token_running.opencode_source import OpencodeSource
 from token_running.pricing import PriceTable
+from token_running.runner_anim import RunnerWindow
 from token_running.source import TokenSource, beijing_day_start
 
 WIDTH, HEIGHT = 430, 170   # 底部留空间给横轴时间刻度；右侧扩宽
@@ -132,6 +133,12 @@ class RealtimeWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self._refresh_geometry()
 
+        # 人物动画：独立子窗口（贴在主窗下方左对齐），随 token 速率播放
+        self._runner = RunnerWindow()
+        self._runner_enabled = True
+        self._sync_runner_geometry()
+        self._runner.show()
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
@@ -151,6 +158,7 @@ class RealtimeWindow(QWidget):
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), attr, ctypes.byref(v), ctypes.sizeof(v))
         except Exception:
             pass
+        self._sync_runner_geometry()
 
     # ---- 数据 ----
 
@@ -191,9 +199,27 @@ class RealtimeWindow(QWidget):
             for m in [t for t in self._bars_min[name] if t < min_cutoff]:
                 del self._bars_min[name][m]
                 del self._cost_min[name][m]
+        self._feed_runner(now)
         self.update()
 
+    def _feed_runner(self, now: int) -> None:
+        """按最近 5 秒窗口内启用渠道的 token 速率驱动人物动画。"""
+        if not getattr(self, "_runner", None) or not self._runner_enabled:
+            return
+        total = 0
+        for name in self._bar_order:
+            if name not in self._enabled:
+                continue
+            b = self._bars_sec.get(name, {})
+            total += sum(t for ts, t in b.items() if ts >= now - 5)
+        self._runner.set_speed(total / 5.0)
+        self._sync_runner_geometry()
+
     # ---- 拖动 ----
+
+    def moveEvent(self, event) -> None:  # noqa: N802
+        super().moveEvent(event)
+        self._sync_runner_geometry()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -445,6 +471,14 @@ class RealtimeWindow(QWidget):
             self._hidden.discard(key)
         self.update()
 
+    def _toggle_runner(self, enabled: bool) -> None:
+        """右键菜单：人物动画显示开关。"""
+        self._runner_enabled = enabled
+        if hasattr(self, "_runner"):
+            self._runner.setVisible(enabled and self._runner.isVisible())
+            if enabled:
+                self._sync_runner_geometry()
+
     def _refresh_height(self) -> None:
         """合并模式固定高度；分渠道模式按启用渠道数增高（每渠道一行 + 底部横轴区）。"""
         if self._view_mode == "split":
@@ -452,6 +486,15 @@ class RealtimeWindow(QWidget):
             self.setFixedSize(self._win_w, CHART_TOP + n * SPLIT_ROW_H + self.SPLIT_AXIS_H)
         else:
             self.setFixedSize(self._win_w, HEIGHT)
+        self._sync_runner_geometry()
+
+    def _sync_runner_geometry(self) -> None:
+        """人物动画窗口跟随主窗：贴在主窗下方、左对齐。"""
+        if not hasattr(self, "_runner"):
+            return
+        g = self.frameGeometry()
+        self._runner.move(g.left(), g.bottom())
+        self._runner.raise_()
 
     # ---- 渠道聚合辅助 ----
 
@@ -576,6 +619,12 @@ class RealtimeWindow(QWidget):
                 continue
             a = QAction(label, m_ch); a.setCheckable(True); a.setChecked(self._is_channel_enabled(ch))
             a.toggled.connect(lambda checked, c=ch: self._set_channel(c, checked)); m_ch.addAction(a)
+
+        # 人物动画开关
+        runner_act = menu.addAction("人物动画")
+        runner_act.setCheckable(True)
+        runner_act.setChecked(self._runner_enabled)
+        runner_act.toggled.connect(self._toggle_runner)
 
         menu.addSeparator()
         price_act = menu.addAction("价格设置…")

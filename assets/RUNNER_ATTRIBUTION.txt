@@ -1,0 +1,5 @@
+Runner character sprite sheet (CC0, Public Domain)
+Author: David Harrington (Blue Yeti Studios)
+Source: https://opengameart.org/content/runner-character
+Frames: idle 5x32x32, run 8x32x32, jump 4x32x32
+License: CC0 - no attribution required
