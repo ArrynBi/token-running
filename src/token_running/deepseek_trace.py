@@ -40,7 +40,7 @@ class DeepseekTraceSource:
         self._online = False
         self._today_since: int | None = None   # 今日口径起点（None=自然日 0 点）
         self._total_since: int | None = None   # 总量口径起点（None=全时段）
-        self._cur_model: str = ""              # 最近一次 request/header 的模型
+        self._model_by_file: dict[Path, str] = {}  # 每个轨迹文件当前模型（避免多文件交叉污染）
         self._init()
 
     def set_windows(self, today_since: int | None = None, total_since: int | None = None) -> None:
@@ -61,7 +61,7 @@ class DeepseekTraceSource:
             try:
                 full = self._decompress(f)
                 for line in full.splitlines():
-                    ev = self._parse_line(line)
+                    ev = self._parse_line(line, f)
                     if ev is None:
                         continue
                     if ev.ts >= total_start:
@@ -149,7 +149,7 @@ class DeepseekTraceSource:
                 for line in lines[parsed:]:
                     if not line.strip():
                         continue
-                    ev = self._parse_line(line)
+                    ev = self._parse_line(line, f)
                     if ev is not None:
                         events.append(ev)
                 self._parsed_lines[f] = len(lines)
@@ -178,30 +178,19 @@ class DeepseekTraceSource:
                                   cache_create_t=a["cache_create_t"]))
         return out
 
-    def _decompress(self, f: Path) -> str:
-        dctx = zstandard.ZstdDecompressor()
-        chunks: list[bytes] = []
-        with open(f, "rb") as fh:
-            reader = dctx.stream_reader(fh)
-            while True:
-                c = reader.read(1 << 20)
-                if not c:
-                    break
-                chunks.append(c)
-        return b"".join(chunks).decode("utf-8", errors="replace")
 
-    def _parse_line(self, line: str) -> UsageEvent | None:
+    def _parse_line(self, line: str, f: Path | None = None) -> UsageEvent | None:
         try:
             obj = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             return None
         etype = obj.get("type")
-        # request/header 携带模型信息，更新当前会话模型（后续 assistant/message 属于该模型）
+        # request/header 携带模型信息，更新该文件的模型（多文件不交叉污染）
         if etype == "request/header":
             cfg = obj.get("data", {}).get("header", {}).get("config", {})
             m = cfg.get("model")
-            if m:
-                self._cur_model = m
+            if m and f is not None:
+                self._model_by_file[f] = m
             return None
         if etype != "assistant/message":
             return None
@@ -220,7 +209,47 @@ class DeepseekTraceSource:
         crt = int(usage.get("cacheReadTokens") or 0)
         rt = int(usage.get("reasoningTokens") or 0)
         tokens = it + ot + crt + rt
-        return UsageEvent(ts, tokens, model=self._cur_model, input_t=it, output_t=ot,
+        model = self._model_by_file.get(f) if f is not None else ""
+        return UsageEvent(ts, tokens, model=model, input_t=it, output_t=ot,
+                          cache_read_t=crt, cache_create_t=0)
+    def _decompress(self, f: Path) -> str:
+        dctx = zstandard.ZstdDecompressor()
+        chunks: list[bytes] = []
+        with open(f, "rb") as fh:
+            reader = dctx.stream_reader(fh)
+            while True:
+                c = reader.read(1 << 20)
+                if not c:
+                    break
+                chunks.append(c)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+
+        # request/header 携带模型信息，更新该文件的模型（多文件不交叉污染）
+        if etype == "request/header":
+            cfg = obj.get("data", {}).get("header", {}).get("config", {})
+            m = cfg.get("model")
+            if m and f is not None:
+                self._model_by_file[f] = m
+            return None
+        if etype != "assistant/message":
+            return None
+        usage = obj.get("data", {}).get("usage")
+        if not usage or not isinstance(usage, dict):
+            return None
+        ts_ms = obj.get("time")
+        if not ts_ms:
+            return None
+        try:
+            ts = int(ts_ms) // 1000
+        except (ValueError, TypeError):
+            return None
+        it = int(usage.get("inputTokens") or 0)
+        ot = int(usage.get("outputTokens") or 0)
+        crt = int(usage.get("cacheReadTokens") or 0)
+        rt = int(usage.get("reasoningTokens") or 0)
+        tokens = it + ot + crt + rt
+        model = self._model_by_file.get(f) if f is not None else ""
+        return UsageEvent(ts, tokens, model=model, input_t=it, output_t=ot,
                           cache_read_t=crt, cache_create_t=0)
 
     def daily_total(self) -> int:
