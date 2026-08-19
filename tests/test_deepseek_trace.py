@@ -47,7 +47,9 @@ def test_poll_parses_usage_and_ignores_other_events(tmp_path):
     _write_zstd(tmp_path / "session.jsonl.zstd", lines)
     src = DeepseekTraceSource(tmp_path, now_fn=lambda: DAY_START + 3600)
     events = src.poll()
-    assert events == [UsageEvent(DAY_START + 10, 100), UsageEvent(DAY_START + 11, 10)]  # 10+20+30+40=100
+    assert [e.tokens for e in events] == [100, 10]  # 10+20+30+40=100
+    assert events[0].input_t == 10 and events[0].output_t == 20
+    assert events[0].cache_read_t == 30
     assert src.poll() == []  # 增量
 
 
@@ -55,13 +57,15 @@ def test_poll_incremental_after_append(tmp_path):
     f = tmp_path / "session.jsonl.zstd"
     _write_zstd(f, [_assistant_msg(DAY_START + 10, {"inputTokens": 10, "outputTokens": 0, "cacheReadTokens": 0, "reasoningTokens": 0})])
     src = DeepseekTraceSource(tmp_path, now_fn=lambda: DAY_START + 3600)
-    assert src.poll() == [UsageEvent(DAY_START + 10, 10)]
+    evs = src.poll()
+    assert [e.tokens for e in evs] == [10] and evs[0].input_t == 10
     # 追加新帧（zstd 支持 concat 多帧）
     cctx = zstandard.ZstdCompressor()
     extra = cctx.compress((json.dumps(_assistant_msg(DAY_START + 12, {"inputTokens": 5, "outputTokens": 5, "cacheReadTokens": 0, "reasoningTokens": 0})) + "\n").encode())
     with open(f, "ab") as fh:
         fh.write(extra)
-    assert src.poll() == [UsageEvent(DAY_START + 12, 10)]
+    evs2 = src.poll()
+    assert [e.tokens for e in evs2] == [10] and evs2[0].input_t == 5
     assert src.poll() == []
 
 

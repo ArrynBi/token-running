@@ -117,6 +117,15 @@ class JsonlSource:
             except OSError:
                 pass
 
+        # 每次 poll 扫描目录，发现运行期间新建的会话文件
+        try:
+            if self._dir.exists():
+                for f in self._dir.rglob("*.jsonl"):
+                    if f not in self._offsets:
+                        self._offsets[f] = 0
+        except OSError:
+            pass
+
         events: list[UsageEvent] = []
         try:
             for f in list(self._offsets):
@@ -130,7 +139,12 @@ class JsonlSource:
                     with open(f, "r", encoding="utf-8", errors="replace") as fh:
                         fh.seek(offset)
                         new_text = fh.read()
-                    self._offsets[f] = size
+                    # 只推进到最后一个完整换行（避免读入未写完的半行导致丢失）
+                    complete_end = new_text.rfind("\n")
+                    if complete_end < 0:
+                        continue  # 无完整行，等待下轮
+                    self._offsets[f] = offset + complete_end + 1
+                    new_text = new_text[:complete_end]
                 except OSError:
                     continue
                 for line in new_text.splitlines():
@@ -142,15 +156,28 @@ class JsonlSource:
         except OSError:
             return events
 
-        # 按秒分桶聚合 + 累计当日（只统计今日）；总量累计全部（含历史日）
-        day_start = self._day_start()
-        bucketed: dict[int, int] = {}
+        # 按秒分桶聚合，保留 token 明细（费用计算依赖 model/input/output/cache_read）
+        # 增量累计用有效窗口起点（set_windows 设置的今日口径，否则自然日 0 点）
+        day_start = self._today_since if self._today_since is not None else self._day_start()
+        bucketed: dict[int, dict] = {}
         for ev in events:
             self._grand_total += ev.tokens
             if ev.ts >= day_start:
-                bucketed[ev.ts] = bucketed.get(ev.ts, 0) + ev.tokens
                 self._daily_total += ev.tokens
-        return [UsageEvent(ts, tokens) for ts, tokens in sorted(bucketed.items())]
+            agg = bucketed.setdefault(ev.ts, {"tokens": 0, "input_t": 0, "output_t": 0,
+                                              "cache_read_t": 0, "cache_create_t": 0, "model": ev.model})
+            agg["tokens"] += ev.tokens
+            agg["input_t"] += ev.input_t
+            agg["output_t"] += ev.output_t
+            agg["cache_read_t"] += ev.cache_read_t
+            agg["cache_create_t"] += ev.cache_create_t
+        out = []
+        for ts in sorted(bucketed):
+            a = bucketed[ts]
+            out.append(UsageEvent(ts, a["tokens"], model=a["model"], input_t=a["input_t"],
+                                  output_t=a["output_t"], cache_read_t=a["cache_read_t"],
+                                  cache_create_t=a["cache_create_t"]))
+        return out
 
     def _parse_line(self, line: str) -> UsageEvent | None:
         try:

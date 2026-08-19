@@ -1,4 +1,4 @@
-"""DeepSeek Harness 会话轨迹数据源：秒级 token 消耗（直接读 DSH 的 session.jsonl.zstd）。
+"""DeepSeek Harness 会话轨迹数据源：秒级 token 消耗（直接读 DSH 的 session*.jsonl.zstd）。
 
 链路：DSH 每次 assistant 消息完成 → 写入 ~/.dsh/sessions/<workspace>/session-<id>.jsonl.zstd
 （zstd 压缩的 JSONL，事件流含 assistant/message 的 usage 字段）→ 本模块增量解析。
@@ -24,7 +24,7 @@ TRACES_DEFAULT = Path.home() / ".dsh" / "sessions"
 class DeepseekTraceSource:
     """增量解析 DSH 会话轨迹 zstd 的秒级数据源。
 
-    - 启动时扫描所有 session.jsonl.zstd；首次 poll 全量解析（填充窗口 + 累计当日/总量）
+    - 启动时扫描所有 session*.jsonl.zstd；首次 poll 全量解析（填充窗口 + 累计当日/总量）
     - 之后每轮只解析新增行（文件追加帧 → 重解压后按已解析行数切分）
     - 与 JsonlSource 相同接口；失败静默，下一轮重试
     """
@@ -57,7 +57,7 @@ class DeepseekTraceSource:
         day_start = self._today_since if self._today_since is not None else self._day_start()
         total_start = self._total_since if self._total_since is not None else 0
         d = t = 0
-        for f in self._dir.rglob("session.jsonl.zstd"):
+        for f in self._dir.rglob("session*.jsonl.zstd"):
             try:
                 full = self._decompress(f)
                 for line in full.splitlines():
@@ -76,7 +76,7 @@ class DeepseekTraceSource:
     def _scan_files(self) -> None:
         if not self._dir.exists():
             return
-        for f in self._dir.rglob("session.jsonl.zstd"):
+        for f in self._dir.rglob("session*.jsonl.zstd"):
             if f not in self._parsed_lines:
                 self._parsed_lines[f] = 0
                 self._last_size[f] = 0
@@ -118,15 +118,23 @@ class DeepseekTraceSource:
             except OSError:
                 return []
 
+        # 每次 poll 扫描目录，发现运行期间新建的会话轨迹
+        try:
+            self._scan_files()
+        except OSError:
+            pass
+
         events: list[UsageEvent] = []
         for f in list(self._parsed_lines):
             try:
                 size = f.stat().st_size
             except OSError:
                 continue
-            if size < self._last_size.get(f, 0):  # 文件重建：全量重扫
+            last_size = self._last_size.get(f, 0)
+            # 文件重建/被替换（变小或同大小但内容变化）：以行数回落检测
+            if size < last_size:
                 self._parsed_lines[f] = 0
-            if size == self._last_size.get(f, 0):
+            if size == last_size:
                 continue
             try:
                 full = self._decompress(f)
@@ -134,6 +142,9 @@ class DeepseekTraceSource:
                 continue
             lines = full.splitlines()
             parsed = self._parsed_lines.get(f, 0)
+            if len(lines) < parsed:  # 内容被替换（行数变少）：全量重扫
+                parsed = 0
+                self._parsed_lines[f] = 0
             if len(lines) > parsed:
                 for line in lines[parsed:]:
                     if not line.strip():
@@ -144,14 +155,28 @@ class DeepseekTraceSource:
                 self._parsed_lines[f] = len(lines)
             self._last_size[f] = size
 
-        day_start = self._day_start()
-        bucketed: dict[int, int] = {}
+        # 按秒分桶聚合，保留 token 明细（费用计算依赖 model/input/output/cache_read）
+        # 增量累计用有效窗口起点（set_windows 设置的今日口径，否则自然日 0 点）
+        day_start = self._today_since if self._today_since is not None else self._day_start()
+        bucketed: dict[int, dict] = {}
         for ev in events:
             self._grand_total += ev.tokens
             if ev.ts >= day_start:
-                bucketed[ev.ts] = bucketed.get(ev.ts, 0) + ev.tokens
                 self._daily_total += ev.tokens
-        return [UsageEvent(ts, tokens) for ts, tokens in sorted(bucketed.items())]
+            agg = bucketed.setdefault(ev.ts, {"tokens": 0, "input_t": 0, "output_t": 0,
+                                              "cache_read_t": 0, "cache_create_t": 0, "model": ev.model})
+            agg["tokens"] += ev.tokens
+            agg["input_t"] += ev.input_t
+            agg["output_t"] += ev.output_t
+            agg["cache_read_t"] += ev.cache_read_t
+            agg["cache_create_t"] += ev.cache_create_t
+        out = []
+        for ts in sorted(bucketed):
+            a = bucketed[ts]
+            out.append(UsageEvent(ts, a["tokens"], model=a["model"], input_t=a["input_t"],
+                                  output_t=a["output_t"], cache_read_t=a["cache_read_t"],
+                                  cache_create_t=a["cache_create_t"]))
+        return out
 
     def _decompress(self, f: Path) -> str:
         dctx = zstandard.ZstdDecompressor()

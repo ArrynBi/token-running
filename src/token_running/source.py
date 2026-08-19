@@ -110,10 +110,11 @@ class TokenSource:
         if today != self._day_key:  # 跨天：按新日期重新聚合今日累计
             self._day_key = today
             try:
+                clause, args = self._type_clause()
                 row = self._conn.execute(
                     f"SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens),0)"
-                    f" FROM proxy_request_logs WHERE created_at >= ? AND rowid <= ?",
-                    (self._day_start(), self._last_rowid),
+                    f" FROM proxy_request_logs WHERE created_at >= ? AND rowid <= ?{clause}",
+                    [self._day_start(), self._last_rowid] + args,
                 ).fetchone()
                 self._daily_total = int(row[0])
             except sqlite3.Error:
@@ -138,7 +139,9 @@ class TokenSource:
             events.append(UsageEvent(ts, total, model=model or "", input_t=i, output_t=o,
                                      cache_read_t=cr, cache_create_t=cc))
             self._last_rowid = rowid
-            self._daily_total += total
+            # 只累计今日事件（迟到写入的昨日记录不污染今日）
+            if ts >= self._day_start():
+                self._daily_total += total
         return events
 
     def daily_total(self) -> int:

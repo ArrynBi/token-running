@@ -66,11 +66,24 @@ class CombinedSource:
         return any(s.online() for s in self._active())
 
     def poll(self) -> list[UsageEvent]:
-        bucketed: dict[int, int] = {}
+        # 合并时保留 token 明细（费用计算依赖 model/input/output/cache_read）
+        bucketed: dict[int, dict] = {}
         for s in self._active():
             for ev in s.poll():
-                bucketed[ev.ts] = bucketed.get(ev.ts, 0) + ev.tokens
-        return [UsageEvent(ts, tokens) for ts, tokens in sorted(bucketed.items())]
+                agg = bucketed.setdefault(ev.ts, {"tokens": 0, "input_t": 0, "output_t": 0,
+                                                  "cache_read_t": 0, "cache_create_t": 0, "model": ev.model})
+                agg["tokens"] += ev.tokens
+                agg["input_t"] += ev.input_t
+                agg["output_t"] += ev.output_t
+                agg["cache_read_t"] += ev.cache_read_t
+                agg["cache_create_t"] += ev.cache_create_t
+        out = []
+        for ts in sorted(bucketed):
+            a = bucketed[ts]
+            out.append(UsageEvent(ts, a["tokens"], model=a["model"], input_t=a["input_t"],
+                                  output_t=a["output_t"], cache_read_t=a["cache_read_t"],
+                                  cache_create_t=a["cache_create_t"]))
+        return out
 
     def daily_total(self) -> int:
         return sum(s.daily_total() for s in self._active())

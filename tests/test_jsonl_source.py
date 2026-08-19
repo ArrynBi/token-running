@@ -45,7 +45,9 @@ def test_poll_parses_assistant_usage_only(tmp_path):
     ])
     src = JsonlSource(tmp_path, now_fn=lambda: DAY_START + 3600)
     events = src.poll()
-    assert events == [UsageEvent(DAY_START + 10, 100), UsageEvent(DAY_START + 11, 10)]  # 10+20+30+40=100
+    assert [e.tokens for e in events] == [100, 10]  # 10+20+30+40=100, 1+2+3+4=10
+    assert events[0].input_t == 10 and events[0].output_t == 20
+    assert events[0].cache_read_t == 30 and events[0].cache_create_t == 40
     assert src.poll() == []  # 第二次无增量
 
 
@@ -54,12 +56,14 @@ def test_poll_incremental_after_append(tmp_path):
     _write_jsonl(f, [_assistant(_iso(DAY_START + 10), {"input_tokens": 10, "output_tokens": 0,
                                                        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})])
     src = JsonlSource(tmp_path, now_fn=lambda: DAY_START + 3600)
-    assert src.poll() == [UsageEvent(DAY_START + 10, 10)]
+    evs = src.poll()
+    assert [e.tokens for e in evs] == [10] and evs[0].input_t == 10
     # 追加新行 → 只返回新事件
     with open(f, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(_assistant(_iso(DAY_START + 12), {"input_tokens": 5, "output_tokens": 5,
                                                                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})) + "\n")
-    assert src.poll() == [UsageEvent(DAY_START + 12, 10)]
+    evs2 = src.poll()
+    assert [e.tokens for e in evs2] == [10] and evs2[0].input_t == 5
     assert src.poll() == []
 
 
@@ -71,7 +75,8 @@ def test_poll_subdirectory_files_and_missing_usage(tmp_path):
         {"type": "assistant", "timestamp": _iso(DAY_START + 21), "message": {"content": "no usage"}},
     ])
     src = JsonlSource(tmp_path, now_fn=lambda: DAY_START + 3600)
-    assert src.poll() == [UsageEvent(DAY_START + 20, 10)]
+    evs = src.poll()
+    assert [e.tokens for e in evs] == [10] and evs[0].input_t == 7
 
 
 def test_daily_total_and_online(tmp_path):
@@ -111,4 +116,3 @@ def test_total_includes_all_days(tmp_path):
 def test_total_empty_when_offline(tmp_path):
     src = JsonlSource(tmp_path / "nope", now_fn=lambda: DAY_START + 3600)
     assert src.total() == 0
-

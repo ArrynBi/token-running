@@ -109,8 +109,10 @@ class RealtimeWindow(QWidget):
         self._today_caliber: str = "day"     # 今日口径："day" 自然日 | "24h" 近24小时
         self._total_caliber: str = "all"     # 总量口径："all" 全时段 | "7d" 近7天 | "30d" 近30天 | "90d" 近90天
         self._drag_offset: QPoint | None = None
-        self._cost_daily = 0.0   # 今日累计费用（USD）
-        self._cost_total = 0.0   # 全时段累计费用（USD）
+        self._cost_daily = 0.0   # 今日累计费用（USD，兼容旧引用）
+        self._cost_total = 0.0   # 全时段累计费用（USD，兼容旧引用）
+        self._ch_cost_daily: dict[str, float] = {n: 0.0 for n in self._channels}  # 每渠道今日费用
+        self._ch_cost_total: dict[str, float] = {n: 0.0 for n in self._channels}  # 每渠道全时段费用
         self._skin = "dark"     # 皮肤："dark" 深色 | "transparent" 全透明
         self._apply_skin()
         self._span: str = "full"   # 窗口跨度："full" 60s | "half" 30s | "third" 20s
@@ -159,8 +161,10 @@ class RealtimeWindow(QWidget):
             for ev in src.poll():
                 cost = self._prices.cost(ev.model, ev.input_t, ev.output_t, ev.cache_read_t, ev.ts)
                 self._cost_total += cost
+                self._ch_cost_total[name] = self._ch_cost_total.get(name, 0.0) + cost
                 if ev.ts >= self._today_start_epoch():
                     self._cost_daily += cost
+                    self._ch_cost_daily[name] = self._ch_cost_daily.get(name, 0.0) + cost
                 b = self._bars_sec[name]
                 b[ev.ts] = b.get(ev.ts, 0) + ev.tokens
                 cb = self._cost_sec[name]
@@ -308,11 +312,20 @@ class RealtimeWindow(QWidget):
             self._apply_skin()
             self.update()
 
-    def _set_currency(self, currency: str) -> None:
-        """切换显示货币：价格表切货币，并重置费用累计（旧累计是旧货币）。"""
-        self._prices.set_currency(currency)
+    def _clear_cost_buckets(self) -> None:
+        """清空费用桶与累计（货币/价格变更后旧桶是旧价格，避免图表与汇总不一致）。"""
+        self._cost_sec = {n: {} for n in self._channels}
+        self._cost_5s = {n: {} for n in self._channels}
+        self._cost_min = {n: {} for n in self._channels}
         self._cost_daily = 0.0
         self._cost_total = 0.0
+        self._ch_cost_daily = {n: 0.0 for n in self._channels}
+        self._ch_cost_total = {n: 0.0 for n in self._channels}
+
+    def _set_currency(self, currency: str) -> None:
+        """切换显示货币：价格表切货币，清空费用桶与累计（旧桶是旧货币价格）。"""
+        self._prices.set_currency(currency)
+        self._clear_cost_buckets()
         self.update()
 
     def _open_price_dialog(self) -> None:
@@ -369,8 +382,7 @@ class RealtimeWindow(QWidget):
             self._save_price_edits(editors)
             self._prices.set_currency(combo.itemData(combo.currentIndex()))
             self._prices.save_defaults()
-            self._cost_daily = 0.0
-            self._cost_total = 0.0
+            self._clear_cost_buckets()  # 价格/货币变更后清空旧费用桶，避免与新价格不一致
             self.update()
 
     def _save_price_edits(self, editors: dict) -> None:
@@ -461,12 +473,12 @@ class RealtimeWindow(QWidget):
 
     def _daily_total(self):
         if self._display == "cost":
-            return self._cost_daily
+            return sum(self._ch_cost_daily.get(n, 0.0) for n in self._bar_order if n in self._enabled)
         return sum(src.daily_total() for name, src in self._channels.items() if name in self._enabled)
 
     def _total(self):
         if self._display == "cost":
-            return self._cost_total
+            return sum(self._ch_cost_total.get(n, 0.0) for n in self._bar_order if n in self._enabled)
         return sum(src.total() for name, src in self._channels.items() if name in self._enabled)
 
     def _online(self) -> bool:
