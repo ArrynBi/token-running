@@ -5,7 +5,7 @@
 ## 功能
 
 - **实时柱状图**：每秒/5秒/分钟级窗口，新柱左进右移
-- **多渠道合并**：DSH（DeepSeek Harness 轨迹）、Claude Code（JSONL）、Codex / Opencode（cc-switch DB）
+- **多渠道合并**：DSH（Harness 轨迹）、Claude Code（JSONL）、Codex（CLI rollout）、Opencode（本地 DB）——全部直读原始日志，秒级可见
 - **分渠道多图**：上下排列各渠道独立柱状图
 - **统计口径可选**：今日（自然日/近24h）、总量（全时段/近7/30/90天）
 - 透明置顶无边框浮窗，可拖动；右键菜单控制显示
@@ -18,9 +18,10 @@ python main.py
 ```
 
 数据源（自动发现，无需配置）：
-- `~/.dsh/sessions/**/session.jsonl.zstd` —— DeepSeek Harness 轨迹
+- `~/.dsh/sessions/**/session*.jsonl.zstd` —— DeepSeek Harness 轨迹
 - `~/.claude/projects/**/*.jsonl` —— Claude Code 会话
-- `~/.cc-switch/cc-switch.db` —— cc-switch（codex / opencode）
+- `~/.codex/sessions/**/rollout-*.jsonl` —— Codex CLI 原始会话日志（token_count 事件，秒级增量）
+- `~/.local/share/opencode/opencode.db` —— Opencode 本地库 message 表（逐条 usage，rowid 增量）
 
 ## 打包 exe（Windows）
 
@@ -73,4 +74,4 @@ python -m pytest tests/ -v
 
 - token 口径 = 含缓存全量（input + output + cache_read + cache_creation / reasoning）
 - 各渠道数据源独立维护增量偏移，勾选渠道只控制显示、数据不丢失
-- 依赖 cc-switch / Claude Code / DSH 生成相应数据文件
+- 依赖 Codex CLI / Opencode / Claude Code / DSH 生成相应数据文件（cc-switch 不再是必需项）

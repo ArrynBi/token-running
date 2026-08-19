@@ -7,8 +7,10 @@ from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QPainter
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
+from token_running.codex_source import CodexSource
 from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
+from token_running.opencode_source import OpencodeSource
 from token_running.pricing import PriceTable
 from token_running.source import TokenSource, beijing_day_start
 
@@ -91,8 +93,8 @@ class RealtimeWindow(QWidget):
             self._channels = {
                 "dsh": DeepseekTraceSource(),
                 "claude": JsonlSource(),
-                "codex": TokenSource(app_types=["codex"]),      # DB 排除 claude 避免与 JSONL 重复
-                "opencode": TokenSource(app_types=["opencode"]),
+                "codex": CodexSource(),          # 直接读 Codex CLI rollout JSONL
+                "opencode": OpencodeSource(),    # 直接读 Opencode 本地 DB
             }
         self._enabled: set[str] = set(self._channels.keys())  # 默认全选
         self._bar_order = list(self._channels.keys())

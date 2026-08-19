@@ -86,7 +86,17 @@
 - [x] 4 个任务均有 commit，工作区干净（`git status` 无未提交改动）
 - [x] 验证结果已记录在计划文档末尾
 
-## 10. Mac 兼容（2026-08-17 追加）
+## 10. 数据源演进（2026-08-18 追加）
+
+- **Codex / Opencode 改为直读原始日志**，不再依赖 cc-switch DB：
+  - `CodexSource`（src/token_running/codex_source.py）：增量解析 `~/.codex/sessions/**/rollout-*.jsonl` 的 `token_count` 事件，用 `last_token_usage`（已验证为增量：文件内差分一致）；模型取自 `session_meta.payload.base_instructions.provenance.model` / `turn_context.payload.model`，按文件隔离
+  - `OpencodeSource`（src/token_running/opencode_source.py）：rowid 增量拉 `~/.local/share/opencode/opencode.db` 的 message 表，解析 data JSON 的 `tokens{total,input,output,reasoning,cache{read,write}}`；`total = input+output+reasoning+cache.read+cache.write`（已验证），reasoning 计入总量、费用按 input/output/cache_read 计
+  - UI `_channels`：`"codex": CodexSource()`、`"opencode": OpencodeSource()`
+  - 真机冒烟：Codex 全盘 598 个 rollout 解析 133k 事件、offset 推进与独立解析零 mismatch（无重复）；Opencode 总量 383,404 与 cc-switch 完全一致
+  - 测试：`tests/test_codex_source.py`（增量/新文件/半行/模型隔离）+ `tests/test_opencode_source.py`（增量/breakdown/跨天/离线），全套 **35 passed**
+
+## 11. Mac 兼容（2026-08-17 追加）
+
 
 - **时区统一**：新增 `beijing_day_start()` / `beijing_today()`（`src/token_running/source.py`），"今日 0 点"与峰谷定价一致按北京 UTC+8 计算；`TokenSource` / `JsonlSource` / `DeepseekTraceSource` / `RealtimeWindow._today_start_epoch` 全部改用该口径（提交 `ba51b66`）。跨时区机器（Mac 非北京时间）行为一致。
 - **平台专属代码**：仅 `realtime_ui.py` 的 `showEvent` 内有 `ctypes.windll.dwmapi`（去 DWM 阴影），import 在 try/except 内、运行时才触发，Mac 上自动跳过——模块导入安全（已冒烟验证 `IMPORT_OK`）。
