@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from token_running.deepseek_trace import DeepseekTraceSource
 from token_running.jsonl_source import JsonlSource
 from token_running.pricing import PriceTable
-from token_running.source import TokenSource
+from token_running.source import TokenSource, beijing_day_start
 
 WIDTH, HEIGHT = 430, 170   # 底部留空间给横轴时间刻度；右侧扩宽
 BAR_WINDOW = 60          # 柱状图窗口：最近 60 秒
@@ -468,8 +468,7 @@ class RealtimeWindow(QWidget):
         return merged
 
     def _today_start_epoch(self) -> int:
-        t = time.localtime()
-        return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+        return beijing_day_start(time.time())
 
     def _daily_total(self):
         if self._display == "cost":

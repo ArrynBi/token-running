@@ -14,6 +14,18 @@ from typing import Callable
 
 DB_DEFAULT = Path.home() / ".cc-switch" / "cc-switch.db"
 
+
+def beijing_day_start(ts: float) -> int:
+    """北京时区（UTC+8）当日 0 点的 epoch 秒——与峰谷定价一致，跨平台（Mac/Windows）行为统一。"""
+    bj = int(ts) + 8 * 3600
+    return (bj - bj % 86400) - 8 * 3600
+
+
+def beijing_today(ts: float) -> str:
+    """北京时区日期字符串（%Y-%m-%d）。"""
+    bj = int(ts) + 8 * 3600
+    return time.strftime("%Y-%m-%d", time.gmtime(bj))
+
 _SQL_COLS = "rowid, created_at, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens"
 
 
@@ -92,11 +104,10 @@ class TokenSource:
             self._online = False
 
     def _today(self) -> str:
-        return time.strftime("%Y-%m-%d", time.localtime(self._now()))
+        return beijing_today(self._now())
 
     def _day_start(self) -> int:
-        t = time.localtime(self._now())
-        return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+        return beijing_day_start(self._now())
 
     def online(self) -> bool:
         return self._online

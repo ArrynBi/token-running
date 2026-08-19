@@ -16,7 +16,7 @@ from typing import Callable
 
 import zstandard
 
-from token_running.source import UsageEvent
+from token_running.source import UsageEvent, beijing_day_start, beijing_today
 
 TRACES_DEFAULT = Path.home() / ".dsh" / "sessions"
 
@@ -92,11 +92,10 @@ class DeepseekTraceSource:
             self._online = False
 
     def _today(self) -> str:
-        return time.strftime("%Y-%m-%d", time.localtime(self._now()))
+        return beijing_today(self._now())
 
     def _day_start(self) -> int:
-        t = time.localtime(self._now())
-        return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+        return beijing_day_start(self._now())
 
     def online(self) -> bool:
         return self._online

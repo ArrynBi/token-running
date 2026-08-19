@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from token_running.source import UsageEvent
+from token_running.source import UsageEvent, beijing_day_start, beijing_today
 
 PROJECTS_DEFAULT = Path.home() / ".claude" / "projects"
 
@@ -91,11 +91,10 @@ class JsonlSource:
         self._grand_total = t
 
     def _today(self) -> str:
-        return time.strftime("%Y-%m-%d", time.localtime(self._now()))
+        return beijing_today(self._now())
 
     def _day_start(self) -> int:
-        t = time.localtime(self._now())
-        return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+        return beijing_day_start(self._now())
 
     def online(self) -> bool:
         return self._online

@@ -22,13 +22,38 @@ python main.py
 - `~/.claude/projects/**/*.jsonl` —— Claude Code 会话
 - `~/.cc-switch/cc-switch.db` —— cc-switch（codex / opencode）
 
-## 打包 exe
+## 打包 exe（Windows）
 
 ```bash
 python -m PyInstaller --onefile --windowed --name token-running --paths src main.py
 ```
 
 产物在 `dist/token-running.exe`（约 50MB，含 PySide6）。
+
+## Mac 运行与打包
+
+源码已做跨平台兼容（时区统一按北京时间 UTC+8 计算“今日”与峰谷定价；DWM 去阴影仅 Windows 生效、其他平台自动跳过）。
+
+**直接运行**（需要 Python 3.10+）：
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+或双击仓库根目录的 `start.command`（首次会自动装依赖）。若提示“无法打开，因为来自身份不明的开发者”，右键 → 打开 一次即可。
+
+**打包 .app**（必须在 Mac 上执行；PyInstaller 不支持跨平台交叉编译）：
+
+```bash
+source venv/bin/activate
+python -m PyInstaller --onefile --windowed --name token-running --paths src main.py
+# 产物 dist/token-running.app（或单文件二进制）
+```
+
+> 注意：Docker 无法运行 macOS 应用（Apple EULA 禁止、无官方 macOS 镜像），黑苹果/OSX-KVM 属灰色地带，.app 的构建与验证需要一台真 Mac（本机或云 Mac 如 MacStadium）。
 
 ## 测试
 

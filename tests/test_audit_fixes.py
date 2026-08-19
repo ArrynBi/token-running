@@ -106,3 +106,22 @@ def test_new_dsh_trace_discovered(tmp_path):
                  _dsh_msg(DAY_START + 11, {"inputTokens": 5, "outputTokens": 0, "cacheReadTokens": 0, "reasoningTokens": 0})])
     evs = src.poll()
     assert [e.tokens for e in evs] == [5], "new trace must be discovered"
+
+
+def test_beijing_day_start():
+    """北京口径日界：与峰谷定价（UTC+8）一致，跨时区机器行为统一。"""
+    from token_running.source import beijing_day_start, beijing_today
+
+    # 北京 2023-11-14 22:00 = UTC 2023-11-14 14:00 = epoch 1700000000
+    ts = 1_700_000_000.0
+    assert beijing_today(ts) == "2023-11-15"          # 北京已是次日
+    day0 = beijing_day_start(ts)
+    # 北京 2023-11-15 00:00 的 epoch
+    assert beijing_today(day0) == "2023-11-15"
+    assert beijing_today(day0 - 1) == "2023-11-14"    # 前一秒还在前一天
+    # 回到 UTC 表示：北京 00:00 = UTC 前一日 16:00
+    assert time.gmtime(day0).tm_hour == 16 and time.gmtime(day0).tm_mday == 14
+    # 任意时刻：day_start <= ts < next day_start
+    nxt = beijing_day_start(ts + 86400)
+    assert day0 <= ts < nxt
+    assert nxt - day0 == 86400
