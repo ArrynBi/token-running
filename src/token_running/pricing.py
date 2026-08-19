@@ -2,8 +2,10 @@
 
 - 价格单位：USD 或 CNY / 1M tokens（输入 / 输出 / 缓存命中）
 - 美元与人民币分别计价（DeepSeek 官方双货币定价，不做汇率换算），可在价格设置一键切换
-- 波峰波谷：高峰时段（北京时间 9:00-12:00、14:00-18:00）按表价；其余空闲时段半价
-- 默认美元价格来自 cc-switch 数据库隐含单价反推；人民币价格按 DeepSeek 官方计价风格给出
+- 波峰波谷（仅 DeepSeek 系列生效）：高峰时段（北京时间 9:00-12:00、14:00-18:00）按表价；
+  其余空闲时段半价；其他模型（gpt 系列等）恒定表价
+- 价格表存高峰价（原价）；空闲时段由 cost() 自动半价
+- DeepSeek 人民币默认价按官方手册（api-docs.deepseek.com/quick_start/pricing，2026-08-17 峰谷定价生效）
 """
 from __future__ import annotations
 
@@ -21,8 +23,11 @@ DEFAULT_PRICES_USD: dict[str, tuple[float, float, float]] = {
 }
 
 DEFAULT_PRICES_CNY: dict[str, tuple[float, float, float]] = {
-    "deepseek-v4-flash": (1.0, 2.0, 0.02),
-    "deepseek-v4-pro": (12.0, 24.0, 1.0),
+    # DeepSeek 官方峰谷定价（元/百万 tokens，表内为高峰价）：
+    # Flash: 高峰 输入3.0/缓存0.10/输出9.0；空闲半价
+    # Pro:   高峰 输入9.0/缓存0.30/输出27.0；空闲半价
+    "deepseek-v4-flash": (3.0, 9.0, 0.10),
+    "deepseek-v4-pro": (9.0, 27.0, 0.30),
     "gpt-5.6-sol": (0.77, 216.0, 3.6),
     "gpt-5.6-luna": (0.04, 8.64, 0.14),
     "gpt-5.6-terra": (0.33, 86.4, 1.44),
@@ -43,8 +48,10 @@ def is_peak(ts: float) -> bool:
     return any(start <= h < end for start, end in PEAK_SLOTS)
 
 
-def price_multiplier(ts: float) -> float:
-    """按时段返回价格倍率：高峰 1.0，空闲 0.5。"""
+def price_multiplier(ts: float, model: str = "") -> float:
+    """按时段返回价格倍率：高峰 1.0，空闲 0.5。仅 DeepSeek 系列模型启用峰谷，其他模型恒定 1.0。"""
+    if not model.startswith("deepseek"):
+        return 1.0
     return 1.0 if is_peak(ts) else 0.5
 
 
@@ -85,9 +92,9 @@ class PriceTable:
         return CURRENCY_SYMBOL.get(self.currency, "$")
 
     def cost(self, model: str, input_t: int, output_t: int, cache_read_t: int, ts: float) -> float:
-        """计算一条记录的费用（当前货币）。"""
+        """计算一条记录的费用（当前货币）；DeepSeek 模型按峰谷自动半价。"""
         i, o, cr = self.get(model)
-        mult = price_multiplier(ts)
+        mult = price_multiplier(ts, model)
         return (input_t / 1e6 * i + output_t / 1e6 * o + cache_read_t / 1e6 * cr) * mult
 
     def save_defaults(self) -> None:
