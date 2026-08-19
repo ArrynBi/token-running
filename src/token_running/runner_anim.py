@@ -71,6 +71,21 @@ class RunnerWindow(QWidget):
         self._timer.timeout.connect(self._advance)
         self._timer.start(50)  # 20Hz 调度，按 _fps 决定是否换帧
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        """窗口显示后移除 DWM 阴影与圆角（避免四周白边）。"""
+        super().showEvent(event)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            hwnd = int(self.winId())
+            # DWMWA_NCRENDERING_POLICY=2 (DWMNCRP_DISABLED)：禁用非客户区渲染（去阴影）
+            # DWMWA_WINDOW_CORNER_PREFERENCE=33 (DWMWCP_DONOTROUND=1)：禁系统圆角
+            for attr, val in ((2, 2), (33, 1)):
+                v = ctypes.c_int(val)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), attr, ctypes.byref(v), ctypes.sizeof(v))
+        except Exception:
+            pass
+
     def _load_frames(self) -> None:
         for name, (sub, n) in ACTIONS.items():
             d = ASSETS_DIR / sub
@@ -125,7 +140,7 @@ class RunnerWindow(QWidget):
     def set_visible_flag(self, v: bool) -> None:
         """菜单开关：隐藏时不播放（保留状态）。"""
         self._visible = v
-        self.setVisible(v and self._active)
+        self.setVisible(v)
         if not v:
             self._action = "idle"
         self.update()
@@ -133,10 +148,12 @@ class RunnerWindow(QWidget):
     # ---- 动画推进 ----
 
     def _advance(self) -> None:
-        if not self._visible or not self._active or not self._frames.get(self._action):
+        # 用户开关关闭时才隐藏；无 token 时保持显示（站着不动，idle 动画）
+        if not self._visible or not self._frames.get(self._action):
             self.hide()
             return
-        self.show()
+        if not self.isVisible():
+            self.show()
         now = time.monotonic()
         interval = 1.0 / max(self._fps, 0.1)
         self._phase += 0.05
