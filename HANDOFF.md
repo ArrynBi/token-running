@@ -80,8 +80,17 @@
 
 以下全部满足即为完成：
 
-- [ ] `python -m pytest tests/ -v` → 5 passed
-- [ ] `python main.py` 浮窗正常显示，柱状图左进右移
-- [ ] 真机验证：对话后 2–7 秒新柱出现、今日数字增长
-- [ ] 4 个任务均有 commit，工作区干净（`git status` 无未提交改动）
-- [ ] 验证结果已记录在计划文档末尾
+- [x] `python -m pytest tests/ -v` → 5 passed（实际 29 passed，含 4 个审查修复 + 1 个北京时区测试）
+- [x] `python main.py` 浮窗正常显示，柱状图左进右移
+- [x] 真机验证：对话后 2–7 秒新柱出现、今日数字增长
+- [x] 4 个任务均有 commit，工作区干净（`git status` 无未提交改动）
+- [x] 验证结果已记录在计划文档末尾
+
+## 10. Mac 兼容（2026-08-17 追加）
+
+- **时区统一**：新增 `beijing_day_start()` / `beijing_today()`（`src/token_running/source.py`），"今日 0 点"与峰谷定价一致按北京 UTC+8 计算；`TokenSource` / `JsonlSource` / `DeepseekTraceSource` / `RealtimeWindow._today_start_epoch` 全部改用该口径（提交 `ba51b66`）。跨时区机器（Mac 非北京时间）行为一致。
+- **平台专属代码**：仅 `realtime_ui.py` 的 `showEvent` 内有 `ctypes.windll.dwmapi`（去 DWM 阴影），import 在 try/except 内、运行时才触发，Mac 上自动跳过——模块导入安全（已冒烟验证 `IMPORT_OK`）。
+- **启动器**：`start.command`（Mac 双击运行，git 可执行位已设；首次自动 `pip install -r requirements.txt`）。
+- **打包**：README 新增「Mac 运行与打包」章节。PyInstaller **不支持跨平台交叉编译**，`.app` 必须在真 Mac 上构建；Docker 无法运行 macOS（Apple EULA、无官方镜像），黑苹果/OSX-KVM 属灰色地带，不采用。
+- 测试：`python -m pytest tests/ -v` → **29 passed**。
+
