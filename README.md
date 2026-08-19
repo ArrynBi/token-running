@@ -63,16 +63,17 @@ python -m PyInstaller --onefile --windowed --name token-running --paths src main
 python -m pytest tests/ -v
 ```
 
-## 人物动画模拟器（调参测试）
+## 开发者模式（调参测试）
 
-不依赖真实 token 消耗，滑杆实时调整速率驱动小人动画：
+包含正式悬浮窗的**全部内容**（柱状图/今日/总量/费用/右键菜单），加模拟速率滑杆：
 
 ```bash
-set PYTHONPATH=src && python sim_runner.py
+python dev_mode.py
 ```
 
-滑杆 0 ~ 8000 t/s，覆盖 站立/慢走/快走/慢跑/快跑 全档位，另有快捷按钮；
-小人浮窗贴在模拟器窗口下方跟随移动（与真实悬浮窗一致）。
+- 滑杆 0 ~ 8000 t/s 模拟 token 消耗，图表与小人均实时响应（带平滑过渡）
+- 快捷按钮：站立/慢走/快走/慢跑/快跑
+- 小人浮窗贴在窗口下方跟随移动；右键图表可调 皮肤/显示方式/统计口径/渠道 等
 
 ## 交互
 

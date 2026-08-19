@@ -85,8 +85,9 @@ def _format_cost(value: float, symbol: str = "$") -> str:
 
 
 class RealtimeWindow(QWidget):
-    def __init__(self, source: TokenSource | None = None) -> None:
+    def __init__(self, source: TokenSource | None = None, embedded: bool = False) -> None:
         super().__init__(None)
+        self._embedded = embedded
         # 渠道：name -> 数据源（每渠道独立桶，勾选只控制显示，数据始终保留）
         if source is not None:
             self._channels: dict[str, object] = {"custom": source}
@@ -123,21 +124,25 @@ class RealtimeWindow(QWidget):
         self._hidden: set[str] = set()  # 隐藏元素：title/summary/time/yaxis/grid
         self._refresh_geometry()
 
-        self.setWindowTitle("Token Running")
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        if not self._embedded:
+            self.setWindowTitle("Token Running")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Tool
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self._refresh_geometry()
 
-        # 人物动画：独立子窗口（贴在主窗下方左对齐），随 token 速率播放
-        self._runner = RunnerWindow()
+        # 人物动画：独立子窗口（贴在主窗下方左对齐），随 token 速率播放；
+        # 嵌入模式（开发者模式）不自动建 runner，由外层宿主管理
+        self._runner: RunnerWindow | None = None
         self._runner_enabled = True
-        self._sync_runner_geometry()
-        self._runner.show()
+        if not self._embedded:
+            self._runner = RunnerWindow()
+            self._sync_runner_geometry()
+            self._runner.show()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -474,7 +479,7 @@ class RealtimeWindow(QWidget):
     def _toggle_runner(self, enabled: bool) -> None:
         """右键菜单：人物动画显示开关。"""
         self._runner_enabled = enabled
-        if hasattr(self, "_runner"):
+        if getattr(self, "_runner", None):
             self._runner.setVisible(enabled and self._runner.isVisible())
             if enabled:
                 self._sync_runner_geometry()
@@ -490,7 +495,7 @@ class RealtimeWindow(QWidget):
 
     def _sync_runner_geometry(self) -> None:
         """人物动画窗口跟随主窗：贴在主窗下方、左对齐。"""
-        if not hasattr(self, "_runner"):
+        if not getattr(self, "_runner", None):
             return
         g = self.frameGeometry()
         self._runner.move(g.left(), g.bottom())

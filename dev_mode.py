@@ -1,15 +1,15 @@
-"""Runner 动画模拟器：滑杆实时调整 token 消耗速度，驱动小人动画，便于调参测试。
+"""开发者模式：完整 token 使用窗 + 模拟速率滑杆 + 人物动画，用于调参测试。
+
+与正式悬浮窗一致的全部内容（柱状图/今日/总量/费用/右键菜单），
+滑杆实时模拟 token 消耗速率，同时驱动图表与小人（带平滑过渡）。
 
 运行：
-    python sim_runner.py            （或在 src 同级）
-    python -m PySide6 已包含于 requirements
-
-滑杆范围 0 ~ 8000 t/s，覆盖 站立/慢走/快走/慢跑/快跑 全档位；
-小人浮窗贴在模拟器窗口下方，拖动模拟器跟随移动（与真实悬浮窗一致）。
+    python dev_mode.py
 """
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 # 自包含：允许从任意目录直接运行（无需设置 PYTHONPATH）
@@ -18,7 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from token_running.realtime_ui import RealtimeWindow
 from token_running.runner_anim import RunnerWindow, SPEED_IDLE, SPEED_WALK, SPEED_RUN
+from token_running.source import UsageEvent
 
 SLIDER_MAX = 8000  # 上限覆盖快跑档（>2000）
 
@@ -31,24 +33,72 @@ PRESETS = [
 ]
 
 
-class SimulatorWindow(QWidget):
+class SimSource:
+    """模拟 token 数据源：按设定速率每秒产出事件，喂给 RealtimeWindow。"""
+
+    def __init__(self, rate_fn) -> None:
+        self._rate_fn = rate_fn
+        self._daily = 0
+        self._grand = 0
+        self._day_key = ""
+
+    def _bump(self, now: int) -> int:
+        """按速率生成每秒 token 量（滑杆值直接作为 t/s）。"""
+        day = time.strftime("%Y-%m-%d", time.localtime(now))
+        if day != self._day_key:
+            self._day_key = day
+            self._daily = 0
+        rate = max(0.0, float(self._rate_fn()))
+        n = int(rate)
+        if n <= 0:
+            return 0
+        self._daily += n
+        self._grand += n
+        return n
+
+    def poll(self) -> list:
+        now = int(time.time())
+        n = self._bump(now)
+        if n <= 0:
+            return []
+        return [UsageEvent(now, n, model="deepseek-v4-flash", input_t=n // 2,
+                          output_t=n - n // 2, cache_read_t=0, cache_create_t=0)]
+
+    def daily_total(self) -> int:
+        return self._daily
+
+    def total(self) -> int:
+        return self._grand
+
+    def online(self) -> bool:
+        return True
+
+    def set_windows(self, today_since=None, total_since=None) -> None:
+        pass  # 模拟源无真实窗口口径
+
+
+class DevModeWindow(QWidget):
     def __init__(self) -> None:
         super().__init__(None)
-        self.setWindowTitle("Runner 模拟器")
-        self.setFixedWidth(420)
-
-        self._runner = RunnerWindow()
-        self._runner.show()
+        self.setWindowTitle("Token Running · 开发者模式")
 
         lay = QVBoxLayout(self)
-        tip = QLabel("拖动滑杆调整 token 消耗速度（t/s），小人实时响应：")
-        lay.addWidget(tip)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(6)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, SLIDER_MAX)
         self._slider.setValue(0)
         self._slider.setTickInterval(1000)
         self._slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+
+        self._sim = SimSource(lambda: self._slider.value())
+        self._chart = RealtimeWindow(source=self._sim, embedded=True)
+        lay.addWidget(self._chart, 0, Qt.AlignmentFlag.AlignTop)
+
+        tip = QLabel("模拟 token 消耗速率（t/s），图表与小人均实时响应：")
+        lay.addWidget(tip)
+
         lay.addWidget(self._slider)
 
         self._value_label = QLabel("0 t/s（站立）")
@@ -62,9 +112,14 @@ class SimulatorWindow(QWidget):
             btn_row.addWidget(b)
         lay.addLayout(btn_row)
 
-        hint = QLabel("档位参考：<1 站立 | 1-400 走 | 400-2000 慢跑 | >2000 快跑\n拖动模拟器窗口，小人会贴在下方跟随")
+        hint = QLabel("档位参考：<1 站立 | 1-400 走 | 400-2000 慢跑 | >2000 快跑；右键图表可调 皮肤/显示方式/统计口径 等（全功能可用）")
         hint.setStyleSheet("color: #888; font-size: 12px;")
+        hint.setWordWrap(True)
         lay.addWidget(hint)
+
+        # 小人独立浮窗贴窗下方（与正式悬浮窗一致）
+        self._runner = RunnerWindow()
+        self._runner.show()
 
         # 100ms 轮询滑杆喂给小人（内部有平滑，拖动跟手不跳变）
         self._timer = QTimer(self)
@@ -119,7 +174,7 @@ class SimulatorWindow(QWidget):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    win = SimulatorWindow()
+    win = DevModeWindow()
     win.show()
     return app.exec()
 
