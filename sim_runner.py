@@ -10,6 +10,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# 自包含：允许从任意目录直接运行（无需设置 PYTHONPATH）
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
@@ -66,6 +70,17 @@ class SimulatorWindow(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(100)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        """窗口首次显示后：居中 + 同步小人位置。"""
+        super().showEvent(event)
+        if not getattr(self, "_centered", False):
+            self._centered = True
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                geo = screen.availableGeometry()
+                self.move(geo.center().x() - self.width() // 2,
+                          geo.center().y() - self.height() // 2)
         self._sync_runner()
 
     def _set_preset(self, val: int) -> None:
