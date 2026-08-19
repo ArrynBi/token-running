@@ -63,6 +63,17 @@ python -m PyInstaller --onefile --windowed --name token-running --paths src main
 python -m pytest tests/ -v
 ```
 
+## 人物动画模拟器（调参测试）
+
+不依赖真实 token 消耗，滑杆实时调整速率驱动小人动画：
+
+```bash
+set PYTHONPATH=src && python sim_runner.py
+```
+
+滑杆 0 ~ 8000 t/s，覆盖 站立/慢走/快走/慢跑/快跑 全档位，另有快捷按钮；
+小人浮窗贴在模拟器窗口下方跟随移动（与真实悬浮窗一致）。
+
 ## 交互
 
 | 操作 | 行为 |
