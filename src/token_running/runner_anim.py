@@ -26,8 +26,11 @@ ACTIONS = {"idle": ("idle", 5), "run": ("run", 8), "jump": ("jump", 4)}
 
 CHAR_H = 96      # 窗口高度（人物 32x32 放大 3 倍）
 CHAR_W = 96
-FPS_MIN = 2.0   # 最低帧率（站立/慢走）
-FPS_MAX = 24.0  # 最高帧率（快跑）
+FPS_MIN = 2.0       # 最低帧率（站立/慢走）
+WALK_FPS_MAX = 8.0    # 快走封顶帧率
+RUN_FPS_MAX = 16.0    # 慢跑封顶帧率
+FPS_MAX = 24.0        # 快跑最高帧率
+SMOOTH = 0.3          # 速度平滑系数（越小过渡越慢，0.3 ≈ 3 秒达到新速度）
 
 # token/秒 档位阈值（可通过 set_speed 传入实际速率自动缩放）
 SPEED_IDLE = 1        # < 1 t/s 视为静止
@@ -52,8 +55,10 @@ class RunnerWindow(QWidget):
         self._frame = 0
         self._fps = 3.0
         self._phase = 0.0          # 帧内相位（用于换帧节奏）
+        self._last_tick = 0.0      # 上次 _advance 时刻（真实时间差换帧）
         self._breath_until = 0.0   # 喘气结束时刻
         self._last_speed = 0.0
+        self._smooth_speed = 0.0  # 平滑后的速率（渐进过渡用）
         self._active = False
         self._visible = True
         self.setWindowTitle("Runner")
@@ -109,29 +114,44 @@ class RunnerWindow(QWidget):
     # ---- 外部接口 ----
 
     def set_speed(self, tokens_per_sec: float) -> None:
-        """每秒由主窗调用：传入当前 token 速率，内部决策动作与帧率。"""
+        """每秒由主窗调用：传入当前 token 速率，内部决策动作与帧率。
+
+        平滑：对速率做指数平滑（SMOOTH），token 暴涨/骤降时动作渐进过渡，
+        不会从站立直接跳到快跑（或反之）。
+        """
         now = time.monotonic()
-        self._last_speed = tokens_per_sec
+        # 指数平滑：新速率 = 旧速率 * (1-SMOOTH) + 新采样 * SMOOTH
+        self._smooth_speed = self._smooth_speed * (1.0 - SMOOTH) + tokens_per_sec * SMOOTH
+        speed = self._smooth_speed
+        self._last_speed = speed
         was_active = self._active
-        self._active = tokens_per_sec >= SPEED_IDLE
+        self._active = speed >= SPEED_IDLE
         if was_active and not self._active:
             # 从运动骤停：进入喘气
             self._breath_until = now + BREATH_SECS
         if not self._visible:
             self._action = "idle"
             return
-        if tokens_per_sec >= SPEED_RUN:
+        if speed >= SPEED_RUN:
+            # 慢跑 -> 快跑：帧率 16 -> 24 连续爬升
             self._action = "run"
-            self._fps = FPS_MIN + (FPS_MAX - FPS_MIN) * min(1.0, (tokens_per_sec - SPEED_RUN) / 3000.0)
-        elif tokens_per_sec >= SPEED_WALK:
+            t = min(1.0, (speed - SPEED_RUN) / 3000.0)
+            self._fps = RUN_FPS_MAX + (FPS_MAX - RUN_FPS_MAX) * t
+        elif speed >= SPEED_WALK:
+            # 快走 -> 慢跑：动作切 run，帧率 8 -> 16 无缝衔接（不跳变）
+            self._action = "run"
+            t = (speed - SPEED_WALK) / (SPEED_RUN - SPEED_WALK)
+            self._fps = WALK_FPS_MAX + (RUN_FPS_MAX - WALK_FPS_MAX) * t
+        elif speed >= SPEED_IDLE:
+            # 慢走 -> 快走：帧率 2 -> 8
             self._action = "walk"
-            self._fps = FPS_MIN + (FPS_MAX - FPS_MIN) * (tokens_per_sec - SPEED_IDLE) / (SPEED_RUN - SPEED_IDLE)
-        elif tokens_per_sec >= SPEED_IDLE:
-            self._action = "walk"
-            self._fps = FPS_MIN + 2.0  # 极低速仍走（慢走）
+            t = (speed - SPEED_IDLE) / (SPEED_WALK - SPEED_IDLE)
+            self._fps = FPS_MIN + (WALK_FPS_MAX - FPS_MIN) * t
         else:
             self._action = "idle"
-            self._fps = 3.0 if now >= self._breath_until else BREATH_RATE * 2.0
+            # 统一最低帧率：从 walk 末段平滑降到站立，不因换 idle 而帧率回弹；
+            # 喘气的剧烈感由 paintEvent 的呼吸位移承担，不需要高换帧率
+            self._fps = FPS_MIN
         self.update()
 
     def is_breathing(self) -> bool:
@@ -155,14 +175,16 @@ class RunnerWindow(QWidget):
         if not self.isVisible():
             self.show()
         now = time.monotonic()
+        # 用真实流逝时间累积相位，换帧后保留余量（不掉帧、不因事件循环忙而卡顿）
+        self._phase += now - self._last_tick
+        self._last_tick = now
         interval = 1.0 / max(self._fps, 0.1)
-        self._phase += 0.05
-        if self._phase >= interval:
-            self._phase = 0.0
-            frames = self._frames.get(self._action, self._frames["idle"])
-            self._frame = (self._frame + 1) % len(frames)
+        frames = self._frames.get(self._action, self._frames["idle"])
         if now >= self._breath_until and self._action == "idle":
             self._frame = 0
+        while self._phase >= interval:
+            self._phase -= interval
+            self._frame = (self._frame + 1) % len(frames)
         self.update()
 
     # ---- 绘制 ----
